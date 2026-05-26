@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Troldtekt Panel Calculator</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Troldtekt Panel Calculator<span class="muted">600 × 1200 mm · halv forbandt · centered</span></h1>
+</header>
+<main>
+  <aside class="controls">
+    <div class="field">
+      <label for="polygon">Room polygon <span class="unit">vertices in mm</span></label>
+      <textarea id="polygon" rows="6" spellcheck="false">0, 0
+3600, 0
+3600, 4800
+0, 4800</textarea>
+      <div class="hint">One vertex per line as "x, y" in mm. Walk the perimeter clockwise.</div>
+      <div class="polygon-status" id="polygon-status"></div>
+    </div>
+    <div class="field">
+      <label for="waste">Waste allowance <span class="unit">%</span></label>
+      <input type="number" id="waste" value="10" min="0" max="50" step="1">
+    </div>
+    <div class="field">
+      <label for="panel-price">Panel price <span class="unit">kr. / panel</span></label>
+      <input type="number" id="panel-price" value="129" min="0" step="1">
+    </div>
+    <div class="field">
+      <label for="screw-pack-price">Screw pack price <span class="unit">kr. / 100 screws</span></label>
+      <input type="number" id="screw-pack-price" value="170" min="0" step="1">
+    </div>
+
+    <div class="toggles">
+      <div class="toggles-title">Measurement layers</div>
+      <label class="toggle"><input type="checkbox" id="show-dims" checked> Room dimensions</label>
+      <label class="toggle"><input type="checkbox" id="show-labels" checked> Full panel labels</label>
+      <label class="toggle"><input type="checkbox" id="show-cuts" checked> Cut measurements</label>
+      <label class="toggle"><input type="checkbox" id="show-screws" checked> Screw positions</label>
+    </div>
+
+    <div class="summary" id="summary"></div>
+    <button class="primary" id="export">Export PDF</button>
+  </aside>
+
+  <section>
+    <div class="canvas-area">
+      <svg id="drawing" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div class="legend">
+        <span><span class="sw" style="background:#fcfcfa; border:1px solid #999;"></span>Full panel</span>
+        <span><span class="sw" style="background:#fef3c7; border:1px solid #b08a3a;"></span>Cut panel</span>
+        <span><span class="sw" style="background:#fecaca; border:1px solid #b91c1c;"></span>&lt; 150 mm cut</span>
+        <span><span class="sw" style="background:#333; border-radius:50%;"></span>Screw</span>
+      </div>
+    </div>
+    <div class="cut-list" id="cut-list"></div>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://unpkg.com/svg2pdf.js@2.2.3/dist/svg2pdf.umd.min.js"></script>
+<script src="app.js" defer></script>
+</body>
+</html>
