@@ -15,14 +15,18 @@ const els = {
   waste:    document.getElementById('waste'),
   panelPrice:     document.getElementById('panel-price'),
   screwPackPrice: document.getElementById('screw-pack-price'),
+  battenPrice:    document.getElementById('batten-price'),
+  battenWidth:    document.getElementById('batten-width'),
   showDims: document.getElementById('show-dims'),
   showLab:  document.getElementById('show-labels'),
   showCuts: document.getElementById('show-cuts'),
   showScrews: document.getElementById('show-screws'),
+  showBattens: document.getElementById('show-battens'),
   svg:      document.getElementById('drawing'),
   summary:  document.getElementById('summary'),
   cutList:  document.getElementById('cut-list'),
   exportBtn:document.getElementById('export'),
+  themeToggle: document.getElementById('theme-toggle'),
 };
 
 // -------- Polygon helpers --------
@@ -130,6 +134,38 @@ function intersectH(a, b, y) {
   return { x: a.x + t * (b.x - a.x), y };
 }
 
+// Clip a horizontal/vertical line to a polygon. Returns the inside
+// intervals (sorted, paired). Works for non-convex polygons via the
+// even-odd rule. Used to compute batten extents.
+function clipHorizontalToPolygon(yLine, poly) {
+  const xs = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    if ((a.y < yLine && b.y >= yLine) || (a.y >= yLine && b.y < yLine)) {
+      const t = (yLine - a.y) / (b.y - a.y);
+      xs.push(a.x + t * (b.x - a.x));
+    }
+  }
+  xs.sort((p, q) => p - q);
+  const out = [];
+  for (let i = 0; i + 1 < xs.length; i += 2) out.push([xs[i], xs[i + 1]]);
+  return out;
+}
+function clipVerticalToPolygon(xLine, poly) {
+  const ys = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    if ((a.x < xLine && b.x >= xLine) || (a.x >= xLine && b.x < xLine)) {
+      const t = (xLine - a.x) / (b.x - a.x);
+      ys.push(a.y + t * (b.y - a.y));
+    }
+  }
+  ys.sort((p, q) => p - q);
+  const out = [];
+  for (let i = 0; i + 1 < ys.length; i += 2) out.push([ys[i], ys[i + 1]]);
+  return out;
+}
+
 // -------- Geometry --------
 
 // Tile the room polygon with 600×1200 panels in halv forbandt, centered
@@ -208,6 +244,101 @@ function generatePanels(roomPoly) {
 
   out.sort((a, b) => a.y - b.y || a.x - b.x);
   return out;
+}
+
+// Battens (lægter) come in two roles, both running parallel to the
+// panel's long axis (same direction as the Troldtekt panels):
+//   1. Perimeter battens — one along each polygon side that is parallel
+//      to the panel long axis. They sit flush against the wall on the
+//      room interior. Walls perpendicular to the long axis don't get a
+//      perimeter batten (you nail into the joists/walls there instead).
+//   2. Interior battens — at the panel grid's row boundaries, 600 mm
+//      apart. If a grid line coincides with one of the perimeter walls
+//      it's skipped (the perimeter batten already covers it — otherwise
+//      a width/2 strip would poke outside the room).
+// Perimeter battens are rotated rectangles (polygons); interior battens
+// are axis-aligned rectangles centred on the grid line.
+const BATTEN_SPACING = PANEL_SHORT; // 600 mm
+const PARALLEL_TOL = 0.1; // dot-product slop for "wall follows long axis"
+
+function generateBattens(roomPoly, battenWidth) {
+  const bbox = polygonBBox(roomPoly);
+  const W = bbox.w, L = bbox.h;
+  const longAxisX = W >= L;
+
+  let cx = bbox.x0 + W / 2;
+  let cy = bbox.y0 + L / 2;
+  if (!pointInPolygon({ x: cx, y: cy }, roomPoly)) {
+    const c = polygonCentroid(roomPoly);
+    cx = c.x; cy = c.y;
+  }
+
+  const out = [];
+  // Perpendicular coordinates of the perimeter walls — used to skip any
+  // interior grid line that would collide with one of them.
+  const perimeterCoords = [];
+
+  // Perimeter battens: only on walls that follow the panel's long axis.
+  for (let i = 0; i < roomPoly.length; i++) {
+    const a = roomPoly[i];
+    const b = roomPoly[(i + 1) % roomPoly.length];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 1) continue;
+    const followsLongAxis = longAxisX
+      ? Math.abs(dy) / length < PARALLEL_TOL  // horizontal-ish wall
+      : Math.abs(dx) / length < PARALLEL_TOL; // vertical-ish wall
+    if (!followsLongAxis) continue;
+
+    const px = -dy / length, py = dx / length;
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const inwardSign = pointInPolygon({ x: mx + px, y: my + py }, roomPoly) ? 1 : -1;
+    const nx = px * inwardSign, ny = py * inwardSign;
+    const corners = [
+      { x: a.x,                      y: a.y                      },
+      { x: b.x,                      y: b.y                      },
+      { x: b.x + nx * battenWidth,   y: b.y + ny * battenWidth   },
+      { x: a.x + nx * battenWidth,   y: a.y + ny * battenWidth   },
+    ];
+    out.push({ perimeter: true, corners, length });
+    perimeterCoords.push(longAxisX ? my : mx);
+  }
+
+  // Interior battens at panel-grid row boundaries (skipping any that
+  // would land on a perimeter wall).
+  const coincides = v => perimeterCoords.some(c => Math.abs(c - v) < 1);
+  if (longAxisX) {
+    const anchorY = cy - PANEL_SHORT / 2;
+    const rMin = Math.floor((bbox.y0 - anchorY) / BATTEN_SPACING);
+    const rMax = Math.ceil ((bbox.y1 - anchorY) / BATTEN_SPACING);
+    for (let r = rMin; r <= rMax; r++) {
+      const y = anchorY + r * BATTEN_SPACING;
+      if (y < bbox.y0 - 0.5 || y > bbox.y1 + 0.5) continue;
+      if (coincides(y)) continue;
+      for (const [x0, x1] of clipHorizontalToPolygon(y, roomPoly)) {
+        if (x1 - x0 < 1) continue;
+        out.push({ horizontal: true, y, x0, x1, length: x1 - x0 });
+      }
+    }
+  } else {
+    const anchorX = cx - PANEL_SHORT / 2;
+    const cMin = Math.floor((bbox.x0 - anchorX) / BATTEN_SPACING);
+    const cMax = Math.ceil ((bbox.x1 - anchorX) / BATTEN_SPACING);
+    for (let c = cMin; c <= cMax; c++) {
+      const x = anchorX + c * BATTEN_SPACING;
+      if (x < bbox.x0 - 0.5 || x > bbox.x1 + 0.5) continue;
+      if (coincides(x)) continue;
+      for (const [y0, y1] of clipVerticalToPolygon(x, roomPoly)) {
+        if (y1 - y0 < 1) continue;
+        out.push({ horizontal: false, x, y0, y1, length: y1 - y0 });
+      }
+    }
+  }
+  return out;
+}
+
+function totalBattenLength(battens) {
+  return battens.reduce((sum, b) => sum + b.length, 0); // mm
 }
 
 // -------- Cut grouping --------
@@ -297,26 +428,49 @@ function totalScrewCount(panels) {
 
 // -------- SVG renderer --------
 
-// SVG presentation attributes applied directly so svg2pdf reads them
-// reliably (it doesn't always resolve external-stylesheet fills/strokes).
-const SVG_STYLE = {
-  roomFill:   { fill: '#ffffff' },
-  roomBorder: { fill: 'none', stroke: '#1a1a1a', 'stroke-width': 5 },
-  panelFull:  { fill: '#fcfcfa', stroke: '#999',    'stroke-width': 1.5 },
-  panelCut:   { fill: '#fef3c7', stroke: '#b08a3a', 'stroke-width': 1.5 },
-  panelWarn:  { fill: '#fecaca', stroke: '#b91c1c', 'stroke-width': 2 },
-  centerline: { stroke: '#c4b87a', 'stroke-width': 1.5, 'stroke-dasharray': '18 10', fill: 'none', opacity: 0.55 },
-  dimLine:    { stroke: '#1a1a1a', 'stroke-width': 1.5, fill: 'none' },
-  dimExt:     { stroke: '#999',    'stroke-width': 1,   fill: 'none' },
-  dimTick:    { stroke: '#1a1a1a', 'stroke-width': 2,   fill: 'none' },
-  dimLabel:   { 'font-family': 'sans-serif', 'font-size': 60, 'font-weight': 600, fill: '#1a1a1a', 'text-anchor': 'middle' },
-  panelLabel: { 'font-family': 'sans-serif', 'font-size': 38, fill: '#999',    'text-anchor': 'middle' },
-  cutLabel:   { 'font-family': 'sans-serif', 'font-weight': 600, fill: '#92400e', 'text-anchor': 'middle' },
-  screw:      { fill: '#333', stroke: '#fff', 'stroke-width': 1.5 },
-  offsetDim:  { stroke: '#1a1a1a', 'stroke-width': 1.5, fill: 'none' },
-  offsetTick: { stroke: '#1a1a1a', 'stroke-width': 1.5, fill: 'none' },
-  offsetLabel:{ 'font-family': 'sans-serif', 'font-size': 38, 'font-weight': 500, fill: '#1a1a1a' },
+// SVG presentation attributes are applied directly (not via stylesheet)
+// so svg2pdf can read them reliably during export. Two palettes, picked
+// by `theme` below; the dark palette leans on dark-grey surfaces and
+// orange accents to mirror the page chrome.
+const THEMES = {
+  light: {
+    roomFill:    { fill: '#ffffff' },
+    roomBorder:  { fill: 'none', stroke: '#1a1a1a', 'stroke-width': 5 },
+    panelFull:   { fill: '#fcfcfa', stroke: '#999',    'stroke-width': 1.5 },
+    panelCut:    { fill: '#fef3c7', stroke: '#b08a3a', 'stroke-width': 1.5 },
+    panelWarn:   { fill: '#fecaca', stroke: '#b91c1c', 'stroke-width': 2 },
+    centerline:  { stroke: '#c4b87a', 'stroke-width': 1.5, 'stroke-dasharray': '18 10', fill: 'none', opacity: 0.55 },
+    panelLabel:  { 'font-family': 'sans-serif', 'font-size': 38, fill: '#999',    'text-anchor': 'middle' },
+    cutLabel:    { 'font-family': 'sans-serif', 'font-weight': 600, fill: '#92400e', 'text-anchor': 'middle' },
+    screw:       { fill: '#333', stroke: '#fff', 'stroke-width': 1.5 },
+    offsetDim:   { stroke: '#1a1a1a', 'stroke-width': 1.5, fill: 'none' },
+    offsetTick:  { stroke: '#1a1a1a', 'stroke-width': 1.5, fill: 'none' },
+    offsetLabel: { 'font-family': 'sans-serif', 'font-size': 38, 'font-weight': 500, fill: '#1a1a1a' },
+    batten:      { fill: '#c69f6c', 'fill-opacity': 0.45, stroke: '#8a5a2b', 'stroke-width': 1, 'stroke-opacity': 0.85 },
+    roomEdgeLabel: '#1a1a1a',
+    cutEdgeLabel:  '#92400e',
+    battenLabel:   '#8a5a2b',
+  },
+  dark: {
+    roomFill:    { fill: '#1f1f1f' },
+    roomBorder:  { fill: 'none', stroke: '#fb923c', 'stroke-width': 5 },
+    panelFull:   { fill: '#2a2a2a', stroke: '#666',    'stroke-width': 1.5 },
+    panelCut:    { fill: '#3a2410', stroke: '#f97316', 'stroke-width': 1.5 },
+    panelWarn:   { fill: '#4a1414', stroke: '#ef4444', 'stroke-width': 2 },
+    centerline:  { stroke: '#7c4a18', 'stroke-width': 1.5, 'stroke-dasharray': '18 10', fill: 'none', opacity: 0.7 },
+    panelLabel:  { 'font-family': 'sans-serif', 'font-size': 38, fill: '#888',    'text-anchor': 'middle' },
+    cutLabel:    { 'font-family': 'sans-serif', 'font-weight': 600, fill: '#fdba74', 'text-anchor': 'middle' },
+    screw:       { fill: '#fb923c', stroke: '#1a1a1a', 'stroke-width': 1.5 },
+    offsetDim:   { stroke: '#d4d4d4', 'stroke-width': 1.5, fill: 'none' },
+    offsetTick:  { stroke: '#d4d4d4', 'stroke-width': 1.5, fill: 'none' },
+    offsetLabel: { 'font-family': 'sans-serif', 'font-size': 38, 'font-weight': 500, fill: '#e6e6e6' },
+    batten:      { fill: '#7a4a18', 'fill-opacity': 0.55, stroke: '#fb923c', 'stroke-width': 1, 'stroke-opacity': 0.9 },
+    roomEdgeLabel: '#f5f5f5',
+    cutEdgeLabel:  '#fdba74',
+    battenLabel:   '#fb923c',
+  },
 };
+let theme = THEMES.light;
 const SCREW_R = 14; // mm radius for drawing
 
 function el(parent, tag, attrs, text) {
@@ -331,7 +485,7 @@ function polygonPointsAttr(poly) {
   return poly.map(p => `${p.x},${p.y}`).join(' ');
 }
 
-function renderSVG(roomPoly, panels) {
+function renderSVG(roomPoly, panels, battens, battenWidth) {
   const svg = els.svg;
   while (svg.firstChild) svg.removeChild(svg.firstChild);
 
@@ -347,16 +501,16 @@ function renderSVG(roomPoly, panels) {
   el(clip, 'polygon', { points: polygonPointsAttr(roomPoly) });
 
   const roomPts = polygonPointsAttr(roomPoly);
-  el(svg, 'polygon', { points: roomPts, ...SVG_STYLE.roomFill });
+  el(svg, 'polygon', { points: roomPts, ...theme.roomFill });
 
   // Centerlines through the bounding-box center
   const cxBB = bbox.x0 + W / 2, cyBB = bbox.y0 + L / 2;
-  el(svg, 'line', { x1: cxBB, y1: bbox.y0, x2: cxBB, y2: bbox.y1, ...SVG_STYLE.centerline });
-  el(svg, 'line', { x1: bbox.x0, y1: cyBB, x2: bbox.x1, y2: cyBB, ...SVG_STYLE.centerline });
+  el(svg, 'line', { x1: cxBB, y1: bbox.y0, x2: cxBB, y2: bbox.y1, ...theme.centerline });
+  el(svg, 'line', { x1: bbox.x0, y1: cyBB, x2: bbox.x1, y2: cyBB, ...theme.centerline });
 
   const gGrid = el(svg, 'g', {});
   for (const p of panels) {
-    const style = p.isFull ? SVG_STYLE.panelFull : (p.tooSmall ? SVG_STYLE.panelWarn : SVG_STYLE.panelCut);
+    const style = p.isFull ? theme.panelFull : (p.tooSmall ? theme.panelWarn : theme.panelCut);
     if (p.isRectangular) {
       el(gGrid, 'rect', { x: p.bbox.x0, y: p.bbox.y0, width: p.bbox.w, height: p.bbox.h, ...style });
     } else {
@@ -364,13 +518,37 @@ function renderSVG(roomPoly, panels) {
     }
   }
 
+  const longAxisX = W >= L;
+  const gBattens = el(svg, 'g', { class: 'layer-battens' });
+  for (const b of battens) {
+    if (b.perimeter) {
+      el(gBattens, 'polygon', {
+        points: polygonPointsAttr(b.corners),
+        ...theme.batten,
+      });
+    } else if (b.horizontal) {
+      el(gBattens, 'rect', {
+        x: b.x0, y: b.y - battenWidth / 2,
+        width: b.x1 - b.x0, height: battenWidth,
+        ...theme.batten,
+      });
+    } else {
+      el(gBattens, 'rect', {
+        x: b.x - battenWidth / 2, y: b.y0,
+        width: battenWidth, height: b.y1 - b.y0,
+        ...theme.batten,
+      });
+    }
+  }
+  drawBattenGapLabels(gBattens, battens, bbox, longAxisX, battenWidth);
+
   const gLabels = el(svg, 'g', { class: 'layer-labels' });
   let seq = 0;
   for (const p of panels) {
     if (!p.isFull) continue;
     seq++;
     const cx = p.bbox.x0 + p.bbox.w / 2, cy = p.bbox.y0 + p.bbox.h / 2;
-    el(gLabels, 'text', { x: cx, y: cy + 14, ...SVG_STYLE.panelLabel }, String(seq));
+    el(gLabels, 'text', { x: cx, y: cy + 14, ...theme.panelLabel }, String(seq));
   }
 
   const gCuts = el(svg, 'g', { class: 'layer-cuts' });
@@ -383,18 +561,28 @@ function renderSVG(roomPoly, panels) {
     const size = minDim < 220 ? 28 : 42;
     el(gCuts, 'text', {
       x: c.x, y: c.y + size / 3,
-      ...SVG_STYLE.cutLabel,
+      ...theme.cutLabel,
       'font-size': size,
     }, label);
   }
 
   const gDims = el(svg, 'g', { class: 'layer-dims' });
-  drawHorizontalDim(gDims, bbox.x0, bbox.x1, bbox.y0 - 350, `${Math.round(W)} mm`);
-  drawVerticalDim  (gDims, bbox.y0, bbox.y1, bbox.x0 - 350, `${Math.round(L)} mm`);
+  drawPolygonEdgeLabels(gDims, roomPoly, {
+    fontSize: 56, offset: 220, color: theme.roomEdgeLabel,
+    minLength: 100, outward: true, fontWeight: 600,
+  });
+  for (const p of panels) {
+    if (p.isFull || p.isRectangular) continue;
+    if (Math.min(p.w, p.h) < 180) continue;
+    drawPolygonEdgeLabels(gDims, p.polygon, {
+      fontSize: 30, offset: 38, color: theme.cutEdgeLabel,
+      minLength: 160, outward: false, fontWeight: 600,
+      avoid: placeScrews(p),
+    });
+  }
 
   // Anchor offsets are bbox-relative; meaningful for rectangular rooms,
   // approximate for polygons (drawn vs bounding box, not actual walls).
-  const longAxisX = W >= L;
   const pw = longAxisX ? PANEL_LONG  : PANEL_SHORT;
   const ph = longAxisX ? PANEL_SHORT : PANEL_LONG;
   const ax  = cxBB - pw / 2;
@@ -409,70 +597,145 @@ function renderSVG(roomPoly, panels) {
   const gScrews = el(svg, 'g', { class: 'layer-screws' });
   for (const p of panels) {
     for (const s of placeScrews(p)) {
-      el(gScrews, 'circle', { cx: s.x, cy: s.y, r: SCREW_R, ...SVG_STYLE.screw });
+      el(gScrews, 'circle', { cx: s.x, cy: s.y, r: SCREW_R, ...theme.screw });
     }
   }
 
   // Room border (polygon, on top so cut edges don't bleed past it)
-  el(svg, 'polygon', { points: roomPts, ...SVG_STYLE.roomBorder });
+  el(svg, 'polygon', { points: roomPts, ...theme.roomBorder });
 }
 
-function drawHorizontalDim(g, x0, x1, yLine, label) {
-  el(g, 'line', { x1: x0, y1: yLine, x2: x1, y2: yLine, ...SVG_STYLE.dimLine });
-  el(g, 'line', { x1: x0, y1: 0, x2: x0, y2: yLine - 30, ...SVG_STYLE.dimExt });
-  el(g, 'line', { x1: x1, y1: 0, x2: x1, y2: yLine - 30, ...SVG_STYLE.dimExt });
-  const t = 70;
-  el(g, 'line', { x1: x0 - t/2, y1: yLine + t/2, x2: x0 + t/2, y2: yLine - t/2, ...SVG_STYLE.dimTick });
-  el(g, 'line', { x1: x1 - t/2, y1: yLine + t/2, x2: x1 + t/2, y2: yLine - t/2, ...SVG_STYLE.dimTick });
-  el(g, 'text', { x: (x0 + x1) / 2, y: yLine - 35, ...SVG_STYLE.dimLabel }, label);
+// Label each edge of a polygon with its length. Used for the room
+// outline (outward, large) and for non-rectangular cut panels (inward,
+// small). The interior side is detected by sampling perpendicular to
+// the edge, so it works for concave polygons too. Pass `avoid` (points
+// with radius SCREW_R) to dodge screw markers — the label is tried at
+// the midpoint first, then shifted along the edge; if every candidate
+// would still collide, the label is skipped.
+function drawPolygonEdgeLabels(g, poly, opts) {
+  const { fontSize, offset, color, minLength, outward, fontWeight = 500, avoid } = opts;
+  const minSep = fontSize * 1.1 + SCREW_R + 6;
+  const candidates = [0.5, 0.32, 0.68, 0.22, 0.78];
+
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const length = Math.hypot(dx, dy);
+    if (length < minLength) continue;
+
+    const px = -dy / length;
+    const py =  dx / length;
+
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    const inside = pointInPolygon({ x: mx + px, y: my + py }, poly);
+    const sign = (outward ? !inside : inside) ? 1 : -1;
+
+    let lx, ly, placed = false;
+    for (const t of candidates) {
+      const cx = a.x + dx * t;
+      const cy = a.y + dy * t;
+      const tx = cx + px * sign * offset;
+      const ty = cy + py * sign * offset;
+      if (avoid && avoid.some(s => Math.hypot(s.x - tx, s.y - ty) < minSep)) continue;
+      lx = tx; ly = ty; placed = true;
+      break;
+    }
+    if (!placed) continue;
+
+    let angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+    if (angleDeg >= 90)      angleDeg -= 180;
+    else if (angleDeg < -90) angleDeg += 180;
+
+    el(g, 'text', {
+      x: lx, y: ly,
+      transform: `rotate(${angleDeg} ${lx} ${ly})`,
+      'text-anchor': 'middle',
+      'dominant-baseline': 'middle',
+      'font-family': 'sans-serif',
+      'font-size': fontSize,
+      'font-weight': fontWeight,
+      fill: color,
+    }, `${Math.round(length)}`);
+  }
+}
+
+// Edge-to-edge distances between adjacent battens. Battens are sorted by
+// their perpendicular coordinate; for each adjacent pair we draw a label
+// at the gap midpoint, placed past the wall-length labels so it doesn't
+// crowd them. Long-axis-X rooms (battens horizontal) → labels on the
+// left, rotated. Long-axis-Y rooms → labels above the top wall.
+function drawBattenGapLabels(g, battens, bbox, longAxisX, battenWidth) {
+  if (battens.length < 2) return;
+  const extents = battens.map(b => {
+    if (b.perimeter) {
+      const cs = longAxisX ? b.corners.map(c => c.y) : b.corners.map(c => c.x);
+      return { min: Math.min(...cs), max: Math.max(...cs) };
+    }
+    const center = b.horizontal ? b.y : b.x;
+    return { min: center - battenWidth / 2, max: center + battenWidth / 2 };
+  });
+  extents.sort((a, b) => a.min - b.min);
+
+  const OFFSET = 400;
+  for (let i = 0; i < extents.length - 1; i++) {
+    const gap = extents[i + 1].min - extents[i].max;
+    if (gap < 1) continue;
+    const mid = (extents[i].max + extents[i + 1].min) / 2;
+
+    const attrs = {
+      'text-anchor': 'middle',
+      'dominant-baseline': 'middle',
+      'font-family': 'sans-serif',
+      'font-size': 42,
+      'font-weight': 600,
+      fill: theme.battenLabel,
+    };
+    if (longAxisX) {
+      attrs.x = bbox.x0 - OFFSET;
+      attrs.y = mid;
+      attrs.transform = `rotate(-90 ${attrs.x} ${attrs.y})`;
+    } else {
+      attrs.x = mid;
+      attrs.y = bbox.y0 - OFFSET;
+    }
+    el(g, 'text', attrs, `${Math.round(gap)}`);
+  }
 }
 
 // Interior dim: vertical line at x from y0..y1, with perpendicular ticks
 // and a label placed to the right of the line. Used for anchor offsets.
 function drawOffsetV(g, x, y0, y1, label) {
   if (y1 - y0 < 80) return;
-  el(g, 'line', { x1: x, y1: y0, x2: x, y2: y1, ...SVG_STYLE.offsetDim });
+  el(g, 'line', { x1: x, y1: y0, x2: x, y2: y1, ...theme.offsetDim });
   const t = 50;
-  el(g, 'line', { x1: x - t / 2, y1: y0, x2: x + t / 2, y2: y0, ...SVG_STYLE.offsetTick });
-  el(g, 'line', { x1: x - t / 2, y1: y1, x2: x + t / 2, y2: y1, ...SVG_STYLE.offsetTick });
+  el(g, 'line', { x1: x - t / 2, y1: y0, x2: x + t / 2, y2: y0, ...theme.offsetTick });
+  el(g, 'line', { x1: x - t / 2, y1: y1, x2: x + t / 2, y2: y1, ...theme.offsetTick });
   el(g, 'text', {
     x: x + 45, y: (y0 + y1) / 2 + 14,
-    ...SVG_STYLE.offsetLabel,
+    ...theme.offsetLabel,
     'text-anchor': 'start',
   }, label);
 }
 
 function drawOffsetH(g, y, x0, x1, label) {
   if (x1 - x0 < 80) return;
-  el(g, 'line', { x1: x0, y1: y, x2: x1, y2: y, ...SVG_STYLE.offsetDim });
+  el(g, 'line', { x1: x0, y1: y, x2: x1, y2: y, ...theme.offsetDim });
   const t = 50;
-  el(g, 'line', { x1: x0, y1: y - t / 2, x2: x0, y2: y + t / 2, ...SVG_STYLE.offsetTick });
-  el(g, 'line', { x1: x1, y1: y - t / 2, x2: x1, y2: y + t / 2, ...SVG_STYLE.offsetTick });
+  el(g, 'line', { x1: x0, y1: y - t / 2, x2: x0, y2: y + t / 2, ...theme.offsetTick });
+  el(g, 'line', { x1: x1, y1: y - t / 2, x2: x1, y2: y + t / 2, ...theme.offsetTick });
   el(g, 'text', {
     x: (x0 + x1) / 2, y: y - 20,
-    ...SVG_STYLE.offsetLabel,
+    ...theme.offsetLabel,
     'text-anchor': 'middle',
-  }, label);
-}
-
-function drawVerticalDim(g, y0, y1, xLine, label) {
-  el(g, 'line', { x1: xLine, y1: y0, x2: xLine, y2: y1, ...SVG_STYLE.dimLine });
-  el(g, 'line', { x1: 0, y1: y0, x2: xLine + 30, y2: y0, ...SVG_STYLE.dimExt });
-  el(g, 'line', { x1: 0, y1: y1, x2: xLine + 30, y2: y1, ...SVG_STYLE.dimExt });
-  const t = 70;
-  el(g, 'line', { x1: xLine - t/2, y1: y0 + t/2, x2: xLine + t/2, y2: y0 - t/2, ...SVG_STYLE.dimTick });
-  el(g, 'line', { x1: xLine - t/2, y1: y1 + t/2, x2: xLine + t/2, y2: y1 - t/2, ...SVG_STYLE.dimTick });
-  const mid = (y0 + y1) / 2;
-  el(g, 'text', {
-    x: xLine - 35, y: mid,
-    ...SVG_STYLE.dimLabel,
-    transform: `rotate(-90 ${xLine - 35} ${mid})`,
   }, label);
 }
 
 // -------- UI: summary, cut list, layer toggles --------
 
-function renderSummary(roomPoly, group, purchase, wastePct, screwCount, costs, panelPrice, screwPackPrice) {
+function renderSummary(roomPoly, group, purchase, wastePct, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice) {
   const bb = polygonBBox(roomPoly);
   const m2 = polygonArea(roomPoly) / 1e6;
   els.summary.innerHTML = `
@@ -486,10 +749,14 @@ function renderSummary(roomPoly, group, purchase, wastePct, screwCount, costs, p
     <div class="stat" style="font-size:0.78rem; color:#888;"><span>incl. ${wastePct}% waste</span><span>(${purchase.layoutPanels} before waste)</span></div>
     <div class="stat total"><span>Screws needed</span><strong>${screwCount}</strong></div>
     <div class="stat" style="font-size:0.78rem; color:#888;"><span>screw packs of 100</span><span>${costs.screwPacks}</span></div>
+    <div class="stat total"><span>Battens needed</span><strong>${battenMeters.toFixed(2)} m</strong></div>
+    <div class="stat" style="font-size:0.78rem; color:#888;"><span>edges along long axis + interior @ 600 mm</span></div>
     <div class="stat total"><span>Panel cost</span><strong>${fmtMoney(costs.panelCost)}</strong></div>
     <div class="stat" style="font-size:0.78rem; color:#888;"><span>${purchase.withWaste} × ${fmtMoney(panelPrice)}</span></div>
     <div class="stat"><span>Screw cost</span><strong>${fmtMoney(costs.screwCost)}</strong></div>
     <div class="stat" style="font-size:0.78rem; color:#888;"><span>${costs.screwPacks} × ${fmtMoney(screwPackPrice)}</span></div>
+    <div class="stat"><span>Batten cost</span><strong>${fmtMoney(costs.battenCost)}</strong></div>
+    <div class="stat" style="font-size:0.78rem; color:#888;"><span>${battenMeters.toFixed(2)} m × ${fmtMoney(battenPrice)}</span></div>
     <div class="stat total"><span><strong>Total</strong></span><strong>${fmtMoney(costs.totalCost)}</strong></div>
   `;
 }
@@ -531,10 +798,11 @@ function renderCutList(group) {
 }
 
 function updateLayerClasses() {
-  els.svg.classList.toggle('no-dims',   !els.showDims.checked);
-  els.svg.classList.toggle('no-labels', !els.showLab.checked);
-  els.svg.classList.toggle('no-cuts',   !els.showCuts.checked);
-  els.svg.classList.toggle('no-screws', !els.showScrews.checked);
+  els.svg.classList.toggle('no-dims',    !els.showDims.checked);
+  els.svg.classList.toggle('no-labels',  !els.showLab.checked);
+  els.svg.classList.toggle('no-cuts',    !els.showCuts.checked);
+  els.svg.classList.toggle('no-screws',  !els.showScrews.checked);
+  els.svg.classList.toggle('no-battens', !els.showBattens.checked);
 }
 
 // -------- Main update --------
@@ -544,12 +812,16 @@ function readInputs() {
   const waste = clamp(parseFloat(els.waste.value), 0, 50);
   const panelPrice     = clamp(parseFloat(els.panelPrice.value),     0, 1e6);
   const screwPackPrice = clamp(parseFloat(els.screwPackPrice.value), 0, 1e6);
+  const battenPrice    = clamp(parseFloat(els.battenPrice.value),    0, 1e6);
+  const battenWidth    = clamp(parseFloat(els.battenWidth.value),   20, 500);
   return {
     polygon: poly,
     polygonErrors: errors,
     waste:          isFinite(waste)          ? waste          : 0,
     panelPrice:     isFinite(panelPrice)     ? panelPrice     : 0,
     screwPackPrice: isFinite(screwPackPrice) ? screwPackPrice : 0,
+    battenPrice:    isFinite(battenPrice)    ? battenPrice    : 0,
+    battenWidth:    isFinite(battenWidth)    ? battenWidth    : 95,
   };
 }
 function clamp(v, lo, hi) { if (!isFinite(v)) return NaN; return Math.max(lo, Math.min(hi, v)); }
@@ -557,16 +829,20 @@ function clamp(v, lo, hi) { if (!isFinite(v)) return NaN; return Math.max(lo, Ma
 const moneyFmt = new Intl.NumberFormat('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 function fmtMoney(n) { return moneyFmt.format(n) + ' kr.'; }
 
-function computeCosts(purchase, screwCount, panelPrice, screwPackPrice) {
+function computeCosts(purchase, screwCount, battenMeters, panelPrice, screwPackPrice, battenPrice) {
   const screwPacks = Math.ceil(screwCount / 100);
   const panelCost  = purchase.withWaste * panelPrice;
   const screwCost  = screwPacks * screwPackPrice;
-  return { screwPacks, panelCost, screwCost, totalCost: panelCost + screwCost };
+  const battenCost = battenMeters * battenPrice;
+  return {
+    screwPacks, panelCost, screwCost, battenCost,
+    totalCost: panelCost + screwCost + battenCost,
+  };
 }
 
 let lastState = null;
 function update() {
-  const { polygon: roomPoly, polygonErrors, waste, panelPrice, screwPackPrice } = readInputs();
+  const { polygon: roomPoly, polygonErrors, waste, panelPrice, screwPackPrice, battenPrice, battenWidth } = readInputs();
 
   // Status line under the polygon textarea
   if (polygonErrors.length || roomPoly.length < 3) {
@@ -581,20 +857,44 @@ function update() {
     `${roomPoly.length} vertices · bbox ${Math.round(bb.w)}×${Math.round(bb.h)} mm · ${m2.toFixed(2)} m²`;
 
   const panels = generatePanels(roomPoly);
+  const battens = generateBattens(roomPoly, battenWidth);
+  const battenMeters = totalBattenLength(battens) / 1000;
   const group  = groupPanels(panels);
   const purchase = estimatePurchase(group.fullCount, group.cutGroups, waste);
   const screwCount = totalScrewCount(panels);
-  const costs = computeCosts(purchase, screwCount, panelPrice, screwPackPrice);
-  renderSVG(roomPoly, panels);
-  renderSummary(roomPoly, group, purchase, waste, screwCount, costs, panelPrice, screwPackPrice);
+  const costs = computeCosts(purchase, screwCount, battenMeters, panelPrice, screwPackPrice, battenPrice);
+  renderSVG(roomPoly, panels, battens, battenWidth);
+  renderSummary(roomPoly, group, purchase, waste, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice);
   renderCutList(group);
   updateLayerClasses();
-  lastState = { roomPoly, waste, panels, group, purchase, screwCount, costs, panelPrice, screwPackPrice };
+  lastState = { roomPoly, waste, panels, battens, battenMeters, battenWidth, group, purchase, screwCount, costs, panelPrice, screwPackPrice, battenPrice };
 }
 
-[els.polygon, els.waste, els.panelPrice, els.screwPackPrice].forEach(i => i.addEventListener('input', update));
-[els.showDims, els.showLab, els.showCuts, els.showScrews].forEach(c => c.addEventListener('change', updateLayerClasses));
+[els.polygon, els.waste, els.panelPrice, els.screwPackPrice, els.battenPrice, els.battenWidth].forEach(i => i.addEventListener('input', update));
+[els.showDims, els.showLab, els.showCuts, els.showScrews, els.showBattens].forEach(c => c.addEventListener('change', updateLayerClasses));
 els.exportBtn.addEventListener('click', exportPDF);
+
+// -------- Theme (light / dark) --------
+
+function applyTheme(name) {
+  theme = THEMES[name] || THEMES.light;
+  document.body.classList.toggle('dark', name === 'dark');
+  els.themeToggle.textContent = name === 'dark' ? 'Light mode' : 'Dark mode';
+  els.themeToggle.setAttribute('aria-pressed', String(name === 'dark'));
+}
+function initTheme() {
+  const stored = localStorage.getItem('troldtekt-theme');
+  const preferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+    ? 'dark' : 'light';
+  applyTheme(stored || preferred);
+}
+els.themeToggle.addEventListener('click', () => {
+  const next = document.body.classList.contains('dark') ? 'light' : 'dark';
+  localStorage.setItem('troldtekt-theme', next);
+  applyTheme(next);
+  update();
+});
+initTheme();
 
 // -------- Room templates (inspired by the floor plan) --------
 
@@ -656,16 +956,20 @@ async function exportPDF() {
   const prevText = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'Generating…';
+  // PDFs are printed on white paper — re-render the SVG with the light
+  // palette before snapshotting so the export never comes out dark.
+  const wasDark = document.body.classList.contains('dark');
+  if (wasDark) { theme = THEMES.light; update(); }
   try {
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
-    const { roomPoly, waste, group, purchase, screwCount, costs, panelPrice, screwPackPrice } = lastState;
+    const { roomPoly, waste, group, purchase, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice } = lastState;
     const bb = polygonBBox(roomPoly);
     const W = Math.round(bb.w), L = Math.round(bb.h);
 
     const clone = els.svg.cloneNode(true);
-    clone.classList.remove('no-dims', 'no-labels', 'no-cuts', 'no-screws');
+    clone.classList.remove('no-dims', 'no-labels', 'no-cuts', 'no-screws', 'no-battens');
 
     const stage = document.createElement('div');
     stage.style.cssText = 'position:fixed;left:-10000px;top:0;width:1200px;height:1600px;';
@@ -718,6 +1022,7 @@ async function exportPDF() {
       `Panels to purchase (incl. ${waste}% waste): ${purchase.withWaste}`,
       `   – before waste: ${purchase.layoutPanels}`,
       `Screws needed: ${screwCount}  (${costs.screwPacks} pack${costs.screwPacks === 1 ? '' : 's'} of 100)`,
+      `Battens needed: ${battenMeters.toFixed(2)} m  (edges along long axis + interior @ 600 mm)`,
     ];
     for (const line of lines) { pdf.text(line, margin, y); y += 5.2; }
     y += 6;
@@ -726,8 +1031,9 @@ async function exportPDF() {
     pdf.text('Cost', margin, y); y += 6;
     pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10);
     const costLines = [
-      [`Panels  (${purchase.withWaste} × ${fmtMoney(panelPrice)})`,          fmtMoney(costs.panelCost)],
-      [`Screws  (${costs.screwPacks} × ${fmtMoney(screwPackPrice)})`,        fmtMoney(costs.screwCost)],
+      [`Panels   (${purchase.withWaste} × ${fmtMoney(panelPrice)})`,           fmtMoney(costs.panelCost)],
+      [`Screws   (${costs.screwPacks} × ${fmtMoney(screwPackPrice)})`,         fmtMoney(costs.screwCost)],
+      [`Battens  (${battenMeters.toFixed(2)} m × ${fmtMoney(battenPrice)})`,   fmtMoney(costs.battenCost)],
     ];
     for (const [lbl, val] of costLines) {
       pdf.text(lbl, margin, y);
@@ -803,7 +1109,8 @@ async function exportPDF() {
   } finally {
     btn.disabled = false;
     btn.textContent = prevText;
+    if (wasDark) { theme = THEMES.dark; update(); }
   }
 }
 
-window.__troldtekt = { generatePanels, groupPanels, estimatePurchase };
+window.__troldtekt = { generatePanels, generateBattens, groupPanels, estimatePurchase, totalBattenLength };

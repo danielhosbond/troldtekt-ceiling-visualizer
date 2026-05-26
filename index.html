@@ -9,6 +9,7 @@
 <body>
 <header>
   <h1>Troldtekt Panel Calculator<span class="muted">600 × 1200 mm · halv forbandt · centered</span></h1>
+  <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle dark mode">Dark mode</button>
 </header>
 <section class="templates" aria-label="Room templates">
   <span class="templates-label">Templates</span>
@@ -37,6 +38,14 @@
       <label for="screw-pack-price">Screw pack price <span class="unit">kr. / 100 screws</span></label>
       <input type="number" id="screw-pack-price" value="170" min="0" step="1">
     </div>
+    <div class="field">
+      <label for="batten-price">Batten price <span class="unit">kr. / meter</span></label>
+      <input type="number" id="batten-price" value="10" min="0" step="0.5">
+    </div>
+    <div class="field">
+      <label for="batten-width">Batten width <span class="unit">mm</span></label>
+      <input type="number" id="batten-width" value="95" min="20" max="200" step="5">
+    </div>
 
     <div class="toggles">
       <div class="toggles-title">Measurement layers</div>
@@ -44,6 +53,7 @@
       <label class="toggle"><input type="checkbox" id="show-labels" checked> Full panel labels</label>
       <label class="toggle"><input type="checkbox" id="show-cuts" checked> Cut measurements</label>
       <label class="toggle"><input type="checkbox" id="show-screws" checked> Screw positions</label>
+      <label class="toggle"><input type="checkbox" id="show-battens" checked> Wooden battens</label>
     </div>
 
     <div class="summary" id="summary"></div>
@@ -58,6 +68,7 @@
         <span><span class="sw" style="background:#fef3c7; border:1px solid #b08a3a;"></span>Cut panel</span>
         <span><span class="sw" style="background:#fecaca; border:1px solid #b91c1c;"></span>&lt; 150 mm cut</span>
         <span><span class="sw" style="background:#333; border-radius:50%;"></span>Screw</span>
+        <span><span class="sw" style="background:#c69f6c; border:1px solid #8a5a2b;"></span>Batten</span>
       </div>
     </div>
     <div class="cut-list" id="cut-list"></div>
