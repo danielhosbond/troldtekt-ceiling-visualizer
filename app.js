@@ -596,6 +596,57 @@ function update() {
 [els.showDims, els.showLab, els.showCuts, els.showScrews].forEach(c => c.addEventListener('change', updateLayerClasses));
 els.exportBtn.addEventListener('click', exportPDF);
 
+// -------- Room templates (inspired by the floor plan) --------
+
+const TEMPLATES = [
+  { name: 'Entre',          polygon: [{x:0,y:0},{x:3000,y:0},{x:3000,y:3000},{x:2000,y:4000},{x:0,y:4000}] },
+  { name: 'Værelse (lille)',polygon: [{x:0,y:0},{x:3000,y:0},{x:3000,y:3773},{x:0,y:3773}] },
+  { name: 'Værelse (stor)', polygon: [{x:0,y:0},{x:3000,y:0},{x:3000,y:3923},{x:0,y:3923}] },
+  { name: 'Toilet',         polygon: [{x:0,y:0},{x:2500,y:0},{x:2500,y:4770},{x:0,y:4770}] },
+  { name: 'Soveværelse',    polygon: [{x:0,y:0},{x:3000,y:0},{x:3000,y:4600},{x:0,y:4600}] },
+  { name: 'Køkken/alrum',   polygon: [{x:0,y:0},{x:6000,y:0},{x:6000,y:3500},{x:3500,y:3500},{x:3500,y:4500},{x:0,y:4500}] },
+  { name: 'Stue',           polygon: [{x:0,y:0},{x:4000,y:0},{x:4000,y:4670},{x:0,y:4670}] },
+];
+
+function templatePreviewHTML(template) {
+  const bb = polygonBBox(template.polygon);
+  const pad = Math.max(bb.w, bb.h) * 0.08;
+  const points = template.polygon.map(p => `${p.x},${p.y}`).join(' ');
+  const stroke = Math.max(bb.w, bb.h) / 55;
+  return `<svg viewBox="${bb.x0 - pad} ${bb.y0 - pad} ${bb.w + 2 * pad} ${bb.h + 2 * pad}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+    <polygon points="${points}" fill="#fef3c7" stroke="#b08a3a" stroke-width="${stroke}" stroke-linejoin="round"/>
+  </svg>`;
+}
+
+function renderTemplates() {
+  const container = document.getElementById('templates');
+  if (!container) return;
+  container.innerHTML = TEMPLATES.map((t, i) => {
+    const area = (polygonArea(t.polygon) / 1e6).toFixed(2);
+    return `<button class="template-card" type="button" data-template="${i}" title="${t.name} — ${area} m²">
+      <div class="template-preview">${templatePreviewHTML(t)}</div>
+      <span class="template-name">${t.name}</span>
+      <span class="template-area">${area} m²</span>
+    </button>`;
+  }).join('');
+  container.addEventListener('click', e => {
+    const card = e.target.closest('.template-card');
+    if (!card) return;
+    const idx = parseInt(card.dataset.template, 10);
+    applyTemplate(TEMPLATES[idx], card);
+  });
+}
+
+function applyTemplate(template, card) {
+  els.polygon.value = template.polygon.map(p => `${p.x}, ${p.y}`).join('\n');
+  if (card) {
+    document.querySelectorAll('.template-card.active').forEach(c => c.classList.remove('active'));
+    card.classList.add('active');
+  }
+  update();
+}
+
+renderTemplates();
 update();
 
 // -------- PDF export --------
