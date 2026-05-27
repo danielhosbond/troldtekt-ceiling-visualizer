@@ -159,6 +159,14 @@ button.primary {
 }
 button.primary:hover { background: #333; }
 button.primary:disabled { background: #999; cursor: wait; }
+button.secondary {
+  padding: 0.55rem 1rem; font-size: 0.88rem;
+  background: transparent; color: #1a1a1a;
+  border: 1px solid #d6d6d0; border-radius: 3px;
+  cursor: pointer; font-weight: 500; letter-spacing: 0.01em;
+}
+button.secondary:hover { border-color: #1a1a1a; background: #f6f6f0; }
+button.secondary:active { background: #ececdf; }
 .summary {
   background: #fff; border: 1px solid #e6e6e0; border-radius: 3px; padding: 0.75rem 0.9rem;
   font-size: 0.85rem;
@@ -295,6 +303,13 @@ body.dark button.primary {
 }
 body.dark button.primary:hover    { background: #fb923c; }
 body.dark button.primary:disabled { background: #555; color: #999; }
+body.dark button.secondary {
+  background: transparent;
+  color: #e6e6e6;
+  border-color: #4a4a4a;
+}
+body.dark button.secondary:hover  { border-color: #fb923c; color: #fb923c; background: transparent; }
+body.dark button.secondary:active { background: #2a1a0c; }
 
 body.dark .summary {
   background: #1f1f1f;

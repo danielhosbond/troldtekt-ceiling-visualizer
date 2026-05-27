@@ -27,7 +27,13 @@ const els = {
   cutList:  document.getElementById('cut-list'),
   exportBtn:document.getElementById('export'),
   themeToggle: document.getElementById('theme-toggle'),
+  rotateBtn: document.getElementById('rotate-panels'),
 };
+
+// Manual override for panel orientation. `false` means "use the natural
+// long-axis-along-the-longer-bbox-side"; toggling the rotate button
+// flips it. Persisted across reloads.
+let panelRotated = localStorage.getItem('troldtekt-rotated') === 'true';
 
 // -------- Polygon helpers --------
 
@@ -172,10 +178,10 @@ function clipVerticalToPolygon(xLine, poly) {
 // on the polygon's bounding box (falling back to centroid if the bbox
 // center isn't inside the polygon). Each panel rect is clipped against
 // the room polygon, so cut pieces can be non-rectangular.
-function generatePanels(roomPoly) {
+function generatePanels(roomPoly, longAxisX) {
   const bbox = polygonBBox(roomPoly);
   const W = bbox.w, L = bbox.h;
-  const longAxisX = W >= L;
+  if (longAxisX === undefined) longAxisX = W >= L;
   const pw = longAxisX ? PANEL_LONG  : PANEL_SHORT;
   const ph = longAxisX ? PANEL_SHORT : PANEL_LONG;
 
@@ -261,10 +267,10 @@ function generatePanels(roomPoly) {
 const BATTEN_SPACING = PANEL_SHORT; // 600 mm
 const PARALLEL_TOL = 0.1; // dot-product slop for "wall follows long axis"
 
-function generateBattens(roomPoly, battenWidth) {
+function generateBattens(roomPoly, battenWidth, longAxisX) {
   const bbox = polygonBBox(roomPoly);
   const W = bbox.w, L = bbox.h;
-  const longAxisX = W >= L;
+  if (longAxisX === undefined) longAxisX = W >= L;
 
   let cx = bbox.x0 + W / 2;
   let cy = bbox.y0 + L / 2;
@@ -485,12 +491,13 @@ function polygonPointsAttr(poly) {
   return poly.map(p => `${p.x},${p.y}`).join(' ');
 }
 
-function renderSVG(roomPoly, panels, battens, battenWidth) {
+function renderSVG(roomPoly, panels, battens, battenWidth, longAxisX) {
   const svg = els.svg;
   while (svg.firstChild) svg.removeChild(svg.firstChild);
 
   const bbox = polygonBBox(roomPoly);
   const W = bbox.w, L = bbox.h;
+  if (longAxisX === undefined) longAxisX = W >= L;
   const pad = 900;
   svg.setAttribute('viewBox', `${bbox.x0 - pad} ${bbox.y0 - pad} ${W + 2 * pad} ${L + 2 * pad}`);
   svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
@@ -518,7 +525,6 @@ function renderSVG(roomPoly, panels, battens, battenWidth) {
     }
   }
 
-  const longAxisX = W >= L;
   const gBattens = el(svg, 'g', { class: 'layer-battens' });
   for (const b of battens) {
     if (b.perimeter) {
@@ -856,14 +862,16 @@ function update() {
   els.polygonStatus.textContent =
     `${roomPoly.length} vertices · bbox ${Math.round(bb.w)}×${Math.round(bb.h)} mm · ${m2.toFixed(2)} m²`;
 
-  const panels = generatePanels(roomPoly);
-  const battens = generateBattens(roomPoly, battenWidth);
+  const naturalLongAxisX = bb.w >= bb.h;
+  const longAxisX = panelRotated ? !naturalLongAxisX : naturalLongAxisX;
+  const panels = generatePanels(roomPoly, longAxisX);
+  const battens = generateBattens(roomPoly, battenWidth, longAxisX);
   const battenMeters = totalBattenLength(battens) / 1000;
   const group  = groupPanels(panels);
   const purchase = estimatePurchase(group.fullCount, group.cutGroups, waste);
   const screwCount = totalScrewCount(panels);
   const costs = computeCosts(purchase, screwCount, battenMeters, panelPrice, screwPackPrice, battenPrice);
-  renderSVG(roomPoly, panels, battens, battenWidth);
+  renderSVG(roomPoly, panels, battens, battenWidth, longAxisX);
   renderSummary(roomPoly, group, purchase, waste, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice);
   renderCutList(group);
   updateLayerClasses();
@@ -873,6 +881,11 @@ function update() {
 [els.polygon, els.waste, els.panelPrice, els.screwPackPrice, els.battenPrice, els.battenWidth].forEach(i => i.addEventListener('input', update));
 [els.showDims, els.showLab, els.showCuts, els.showScrews, els.showBattens].forEach(c => c.addEventListener('change', updateLayerClasses));
 els.exportBtn.addEventListener('click', exportPDF);
+els.rotateBtn.addEventListener('click', () => {
+  panelRotated = !panelRotated;
+  localStorage.setItem('troldtekt-rotated', String(panelRotated));
+  update();
+});
 
 // -------- Theme (light / dark) --------
 
@@ -898,14 +911,24 @@ initTheme();
 
 // -------- Room templates (inspired by the floor plan) --------
 
+// One template per distinct shape topology so the gallery shows the full
+// range of polygons the calculator handles, not seven near-identical
+// rectangles.
 const TEMPLATES = [
+  // Plain rectangle.
+  { name: 'Værelse',        polygon: [{x:0,y:0},{x:3000,y:0},{x:3000,y:4000},{x:0,y:4000}] },
+  // Trapezoid — one slanted wall.
+  { name: 'Soveværelse',    polygon: [{x:0,y:0},{x:3500,y:0},{x:3000,y:4200},{x:0,y:4200}] },
+  // Rectangle with a chimney-pocket notch.
+  { name: 'Badeværelse',    polygon: [{x:0,y:0},{x:2500,y:0},{x:2500,y:3000},{x:1800,y:3000},{x:1800,y:2200},{x:1200,y:2200},{x:1200,y:3000},{x:0,y:3000}] },
+  // Pentagon — one cut corner.
   { name: 'Entre',          polygon: [{x:0,y:0},{x:3000,y:0},{x:3000,y:3000},{x:2000,y:4000},{x:0,y:4000}] },
-  { name: 'Værelse (lille)',polygon: [{x:0,y:0},{x:3000,y:0},{x:3000,y:3773},{x:0,y:3773}] },
-  { name: 'Værelse (stor)', polygon: [{x:0,y:0},{x:3000,y:0},{x:3000,y:3923},{x:0,y:3923}] },
-  { name: 'Toilet',         polygon: [{x:0,y:0},{x:2500,y:0},{x:2500,y:4770},{x:0,y:4770}] },
-  { name: 'Soveværelse',    polygon: [{x:0,y:0},{x:3000,y:0},{x:3000,y:4600},{x:0,y:4600}] },
+  // L-shape.
   { name: 'Køkken/alrum',   polygon: [{x:0,y:0},{x:6000,y:0},{x:6000,y:3500},{x:3500,y:3500},{x:3500,y:4500},{x:0,y:4500}] },
-  { name: 'Stue',           polygon: [{x:0,y:0},{x:4000,y:0},{x:4000,y:4670},{x:0,y:4670}] },
+  // Octagonal (rectangle with all four corners chamfered).
+  { name: 'Stue',           polygon: [{x:800,y:0},{x:4200,y:0},{x:5000,y:800},{x:5000,y:3700},{x:4200,y:4500},{x:800,y:4500},{x:0,y:3700},{x:0,y:800}] },
+  // T-shape.
+  { name: 'Kontor',         polygon: [{x:0,y:0},{x:3500,y:0},{x:3500,y:1500},{x:2500,y:1500},{x:2500,y:3500},{x:1000,y:3500},{x:1000,y:1500},{x:0,y:1500}] },
 ];
 
 function templatePreviewHTML(template) {
