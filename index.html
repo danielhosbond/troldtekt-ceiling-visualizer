@@ -27,6 +27,11 @@
       <div class="polygon-status" id="polygon-status"></div>
     </div>
     <button class="secondary" id="rotate-panels" type="button">Rotate panels 90°</button>
+    <div class="btn-row">
+      <button class="secondary" id="optimize" type="button">Optimize layout</button>
+      <button class="secondary" id="recenter" type="button">Re-center</button>
+    </div>
+    <div class="anchor-status" id="anchor-status"></div>
     <div class="field">
       <label for="waste">Waste allowance <span class="unit">%</span></label>
       <input type="number" id="waste" value="10" min="0" max="50" step="1">
@@ -69,6 +74,7 @@
         <span><span class="sw" style="background:#fef3c7; border:1px solid #b08a3a;"></span>Cut panel</span>
         <span><span class="sw" style="background:#fecaca; border:1px solid #b91c1c;"></span>&lt; 150 mm cut</span>
         <span><span class="sw" style="background:#333; border-radius:50%;"></span>Screw</span>
+        <span><span class="sw" style="background:#b91c1c; border-radius:50%;"></span>Screw without batten</span>
         <span><span class="sw" style="background:#c69f6c; border:1px solid #8a5a2b;"></span>Batten</span>
       </div>
     </div>

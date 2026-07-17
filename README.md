@@ -10,11 +10,22 @@ No build step. Hostable as static files on GitHub Pages.
 ## Features
 
 - **Arbitrary room polygons** — any number of vertices, any angles
-  including diagonals. Enter vertices clockwise as `x, y` (mm).
+  including diagonals. Enter vertices as `x, y` (mm). Input is
+  validated: self-intersecting or zero-area polygons are rejected with
+  a message, duplicate/closing vertices are dropped, and
+  counter-clockwise input is automatically reversed to clockwise.
 - **Centered halv forbandt tiling** — the anchor panel is placed on
   the bounding-box center (or polygon centroid if the bbox center is
   outside the polygon, e.g. for L-shapes). Odd rows offset by 600 mm
   along the panel's long axis.
+- **Layout optimizer** — the "Optimize layout" button grid-searches
+  anchor offsets (50 mm steps, both panel orientations) and applies the
+  layout that minimizes, in order: cuts narrower than 150 mm, panels to
+  purchase, number of cut pieces, and distance from the centered
+  anchor. The status line under the button reports what improved
+  (e.g. "cuts < 150 mm: 10 → 0 · cut pieces: 16 → 11"); "Re-center"
+  restores the centered layout. Editing the polygon or rotating panels
+  resets the offset.
 - **Panel cut classification** — `full`, `edge`, `corner`, `shaped`.
   Shaped cuts are clipped polygons (from diagonal walls); their
   bounding box is shown alongside their actual outline.
@@ -25,8 +36,12 @@ No build step. Hostable as static files on GitHub Pages.
   exists).
 - **Screw placement** — 4 corners at 25 mm inset + 2 middle screws on
   the long edges when the panel's long side is ≥ 800 mm. For shaped
-  cuts, screws outside the polygon are dropped. Total screw count and
-  pack-of-100 count are computed.
+  cuts, screws outside the polygon are dropped. Every screw is checked
+  against the batten layout: screws with no batten beneath are snapped
+  (up to 300 mm along the cross axis) onto the nearest batten that is
+  still inside the cut; if none is reachable the screw is drawn red and
+  a warning suggests an extra batten/noggin there. Total screw count
+  and pack-of-100 count are computed.
 - **Wooden battens (lægter)** — optional layer with two roles:
   - *Perimeter battens* sit flush against every wall that runs parallel
     to the panel's long axis (the long side of the Troldtekt), extending
@@ -36,6 +51,11 @@ No build step. Hostable as static files on GitHub Pages.
     perimeter wall are skipped so the two layers never overlap.
   - Edge-to-edge gap labels are drawn outside the room past the
     wall-length labels.
+- **Purchase estimate with cut pairing** — all cut pieces are packed
+  into virtual 600×1200 source panels (first-fit-decreasing guillotine,
+  rotation allowed), so complementary cuts share a panel: a 600×340 and
+  a 600×860 count as one panel, not two. The summary shows how many
+  source panels the cut pieces come from.
 - **Cost estimate** — panel cost + screw cost + batten cost (kr./m × m
   required), summed in DKK.
 - **Live SVG drawing** with toggleable layers: room dimensions, full
@@ -61,8 +81,9 @@ python3 -m http.server
 
 ### Polygon input format
 
-One vertex per line, walked clockwise, separators are flexible
-(`,`, ` `, `;`):
+One vertex per line, separators are flexible (`,`, ` `, `;`).
+Winding direction doesn't matter — counter-clockwise input is
+normalized to clockwise automatically:
 
 ```
 0, 0
@@ -85,23 +106,46 @@ For an L-shape:
 The status line under the textarea reports vertex count, bounding box
 size, and computed area.
 
+### Tests
+
+`test.js` asserts the geometry invariants (parser validation, full
+panel coverage, batten totals, screws-on-battens). Run it with Node:
+
+```sh
+node test.js
+```
+
+or, without Node, with the JavaScriptCore shell that ships with macOS
+(add its directory to your PATH or call it directly):
+
+```sh
+alias jsc=/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc
+jsc -e 'var module = { exports: {} };' app.js test.js
+```
+
 ### Console testing
 
 `window.__troldtekt` exposes the pure geometry functions:
 
 ```js
 const poly = [{x:0,y:0},{x:3600,y:0},{x:3600,y:4800},{x:0,y:4800}];
-__troldtekt.generatePanels(poly);
-__troldtekt.generateBattens(poly, 95);   // pass batten width in mm
-__troldtekt.totalBattenLength(battens);  // returns mm
+__troldtekt.generatePanels(poly);              // optional: longAxisX, {dx, dy}
+__troldtekt.generateBattens(poly, 95);         // batten width in mm; optional axis/offset
+__troldtekt.totalBattenLength(battens);        // returns mm
 __troldtekt.groupPanels(panels);
 __troldtekt.estimatePurchase(fullCount, cutGroups, wastePct);
+__troldtekt.optimizeLayout(poly, true);        // best {offset, longAxisX, tiny, panelsNeeded}
+__troldtekt.scoreLayout(poly, true, {dx:0, dy:0});
+__troldtekt.runOptimize();                     // same as clicking "Optimize layout"
 ```
 
 ## Conventions and assumptions
 
 - Panel's long side (1200 mm) is laid along the bounding box's longer
-  axis.
+  axis by default; the rotate button and the optimizer can override it.
+- The purchase estimate ignores saw kerf (the common complementary pair
+  summing to exactly 1200 mm is a single cut) and packs shaped cuts by
+  their bounding box.
 - Halv forbandt offsets along the long axis by 600 mm on odd rows.
 - Cuts smaller than 150 mm in either bounding-box dimension are flagged
   red on the drawing and noted in the cut list.
@@ -124,7 +168,10 @@ __troldtekt.estimatePurchase(fullCount, cutGroups, wastePct);
   SVG element fills and strokes are applied as presentation attributes
   in `app.js` so svg2pdf reads them reliably.
 - `app.js` — geometry (panels, battens, polygon clipping), rendering,
-  summary, cut list, theme switching, PDF export.
+  summary, cut list, theme switching, PDF export. Loadable in Node
+  (DOM wiring is skipped, pure functions exported) for testing.
+- `test.js` — assertion tests for the pure geometry, run with
+  `node test.js` (dev-only, not loaded by the page).
 - `CLAUDE.md` — architectural notes for future contributors / AI
   assistants.
 

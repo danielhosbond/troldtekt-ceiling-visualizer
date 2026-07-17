@@ -9,7 +9,12 @@ const MIN_CUT_WARN = 150;
 const SCREW_INSET = 25;     // mm from each panel edge
 const SCREW_MID_THRESHOLD = 800; // long-axis length needed before mid screws are added
 
-const els = {
+// True in the browser; false when loaded by Node for `node test.js`.
+// All DOM wiring below is skipped in Node so the pure geometry
+// functions can be required and unit-tested.
+const isBrowser = typeof document !== 'undefined';
+
+const els = !isBrowser ? null : {
   polygon:  document.getElementById('polygon'),
   polygonStatus: document.getElementById('polygon-status'),
   waste:    document.getElementById('waste'),
@@ -28,19 +33,28 @@ const els = {
   exportBtn:document.getElementById('export'),
   themeToggle: document.getElementById('theme-toggle'),
   rotateBtn: document.getElementById('rotate-panels'),
+  optimizeBtn: document.getElementById('optimize'),
+  recenterBtn: document.getElementById('recenter'),
+  anchorStatus: document.getElementById('anchor-status'),
 };
 
 // Manual override for panel orientation. `false` means "use the natural
 // long-axis-along-the-longer-bbox-side"; toggling the rotate button
 // flips it. Persisted across reloads.
-let panelRotated = localStorage.getItem('troldtekt-rotated') === 'true';
+let panelRotated = isBrowser && localStorage.getItem('troldtekt-rotated') === 'true';
+
+// Anchor offset applied to the panel grid, set by the layout optimizer
+// (or reset to centered). Not persisted: it is tuned to one polygon and
+// orientation, so editing the polygon or rotating panels resets it.
+let anchorOffset = { dx: 0, dy: 0 };
 
 // -------- Polygon helpers --------
 
 function parsePolygon(text) {
   const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-  const poly = [];
+  const raw = [];
   const errors = [];
+  const notes = [];
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(/^[(\[]?\s*(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)\s*[\])]?$/);
     if (!m) { errors.push(`Line ${i + 1}: cannot parse "${lines[i]}"`); continue; }
@@ -49,10 +63,80 @@ function parsePolygon(text) {
       errors.push(`Line ${i + 1}: out of range`);
       continue;
     }
-    poly.push({ x, y });
+    raw.push({ x, y });
   }
-  if (poly.length < 3) errors.push('Need at least 3 vertices.');
-  return { poly, errors };
+
+  // Drop consecutive duplicate vertices, and a repeated closing vertex
+  // (people often re-enter the first point to "close" the polygon).
+  const poly = [];
+  for (const p of raw) {
+    const prev = poly[poly.length - 1];
+    if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < 0.5) continue;
+    poly.push(p);
+  }
+  if (poly.length >= 2) {
+    const a = poly[0], b = poly[poly.length - 1];
+    if (Math.hypot(a.x - b.x, a.y - b.y) < 0.5) poly.pop();
+  }
+  if (poly.length !== raw.length) notes.push('duplicate vertices dropped');
+
+  if (poly.length < 3) {
+    errors.push('Need at least 3 vertices.');
+    return { poly, errors, notes };
+  }
+
+  const signed = polygonSignedArea(poly);
+  if (Math.abs(signed) < 1) {
+    errors.push('Polygon has zero area.');
+    return { poly, errors, notes };
+  }
+  // Normalize to clockwise (positive signed area with y pointing down)
+  // so downstream geometry always sees one winding.
+  if (signed < 0) {
+    poly.reverse();
+    notes.push('reversed to clockwise');
+  }
+
+  const cross = findSelfIntersection(poly);
+  if (cross) {
+    errors.push(`Polygon self-intersects: wall ${cross[0] + 1} crosses wall ${cross[1] + 1}.`);
+  }
+  return { poly, errors, notes };
+}
+
+// Proper segment intersection test including collinear touching.
+function segmentsIntersect(p1, p2, p3, p4) {
+  const orient = (a, b, c) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  const onSeg = (a, b, c) =>
+    Math.min(a.x, b.x) - 1e-9 <= c.x && c.x <= Math.max(a.x, b.x) + 1e-9 &&
+    Math.min(a.y, b.y) - 1e-9 <= c.y && c.y <= Math.max(a.y, b.y) + 1e-9;
+  const d1 = orient(p3, p4, p1);
+  const d2 = orient(p3, p4, p2);
+  const d3 = orient(p1, p2, p3);
+  const d4 = orient(p1, p2, p4);
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+      ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+  if (d1 === 0 && onSeg(p3, p4, p1)) return true;
+  if (d2 === 0 && onSeg(p3, p4, p2)) return true;
+  if (d3 === 0 && onSeg(p1, p2, p3)) return true;
+  if (d4 === 0 && onSeg(p1, p2, p4)) return true;
+  return false;
+}
+
+// Returns [i, j] (0-based wall indices) of the first pair of
+// non-adjacent walls that cross, or null if the polygon is simple.
+// O(n²) — fine for hand-entered room outlines.
+function findSelfIntersection(poly) {
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (j === i + 1 || (i === 0 && j === n - 1)) continue; // share a vertex
+      if (segmentsIntersect(poly[i], poly[(i + 1) % n], poly[j], poly[(j + 1) % n])) {
+        return [i, j];
+      }
+    }
+  }
+  return null;
 }
 
 function polygonBBox(poly) {
@@ -66,13 +150,18 @@ function polygonBBox(poly) {
   return { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0 };
 }
 
-function polygonArea(poly) {
+// Shoelace. Positive = clockwise when y points down (screen coords).
+function polygonSignedArea(poly) {
   let a = 0;
   for (let i = 0; i < poly.length; i++) {
     const p = poly[i], q = poly[(i + 1) % poly.length];
     a += p.x * q.y - q.x * p.y;
   }
-  return Math.abs(a) / 2;
+  return a / 2;
+}
+
+function polygonArea(poly) {
+  return Math.abs(polygonSignedArea(poly));
 }
 
 function polygonCentroid(poly) {
@@ -178,7 +267,11 @@ function clipVerticalToPolygon(xLine, poly) {
 // on the polygon's bounding box (falling back to centroid if the bbox
 // center isn't inside the polygon). Each panel rect is clipped against
 // the room polygon, so cut pieces can be non-rectangular.
-function generatePanels(roomPoly, longAxisX) {
+// `offset` ({dx, dy} in mm, optional) shifts the whole grid off the
+// centered anchor — used by the layout optimizer. The pattern repeats
+// every 1200 mm along the long axis and 600 mm across, so canonical
+// offsets stay within ±600 / ±300.
+function generatePanels(roomPoly, longAxisX, offset) {
   const bbox = polygonBBox(roomPoly);
   const W = bbox.w, L = bbox.h;
   if (longAxisX === undefined) longAxisX = W >= L;
@@ -191,6 +284,7 @@ function generatePanels(roomPoly, longAxisX) {
     const c = polygonCentroid(roomPoly);
     cx = c.x; cy = c.y;
   }
+  if (offset) { cx += offset.dx || 0; cy += offset.dy || 0; }
 
   const shortSize = longAxisX ? L : W;
   const longSize  = longAxisX ? W : L;
@@ -267,7 +361,7 @@ function generatePanels(roomPoly, longAxisX) {
 const BATTEN_SPACING = PANEL_SHORT; // 600 mm
 const PARALLEL_TOL = 0.1; // dot-product slop for "wall follows long axis"
 
-function generateBattens(roomPoly, battenWidth, longAxisX) {
+function generateBattens(roomPoly, battenWidth, longAxisX, offset) {
   const bbox = polygonBBox(roomPoly);
   const W = bbox.w, L = bbox.h;
   if (longAxisX === undefined) longAxisX = W >= L;
@@ -278,6 +372,9 @@ function generateBattens(roomPoly, battenWidth, longAxisX) {
     const c = polygonCentroid(roomPoly);
     cx = c.x; cy = c.y;
   }
+  // Interior battens sit on the panel grid's row boundaries, so they
+  // must follow the same anchor offset as generatePanels.
+  if (offset) { cx += offset.dx || 0; cy += offset.dy || 0; }
 
   const out = [];
   // Perpendicular coordinates of the perimeter walls — used to skip any
@@ -387,14 +484,117 @@ function piecesPerPanel(w, h) {
   return Math.max(1, n1, n2);
 }
 
-function estimatePurchase(fullCount, cutGroups, wastePct) {
-  let cutPanels = 0;
-  for (const g of cutGroups) {
-    cutPanels += Math.ceil(g.count / g.piecesPerPanel);
+// Pack the cut pieces into virtual 600×1200 source panels so that
+// complementary cuts share a panel (e.g. a 600×340 and a 600×860 both
+// come out of one 600×1200). Two-level guillotine, first-fit-decreasing:
+// a panel is divided into full-width strips along its 1200 mm length;
+// each strip holds pieces side by side across the 600 mm width. Pieces
+// may rotate 90°. Shaped cuts are packed by their bounding box
+// (conservative). Saw kerf is ignored — the most common pairing (two
+// pieces summing to exactly 1200 mm) is a single cut.
+function packCutPieces(pieces) {
+  const sorted = pieces
+    .map(p => ({ a: Math.min(p.w, p.h), b: Math.max(p.w, p.h) }))
+    .sort((p, q) => q.b - p.b || q.a - p.a);
+
+  const panels = []; // { freeLen, strips: [{ len, freeWidth }] }
+  for (const piece of sorted) {
+    if (packIntoStrip(panels, piece)) continue;
+    if (packIntoNewStrip(panels, piece)) continue;
+    const panel = { freeLen: PANEL_LONG, strips: [] };
+    panels.push(panel);
+    packIntoNewStrip([panel], piece); // always fits: len ≤ 1200
   }
+  return panels;
+}
+
+function packIntoStrip(panels, piece) {
+  for (const panel of panels) {
+    for (const s of panel.strips) {
+      // Prefer the orientation whose long side runs along the strip,
+      // so the piece eats as little strip width as possible.
+      if (piece.b <= s.len && piece.a <= s.freeWidth) { s.freeWidth -= piece.a; return true; }
+      if (piece.a <= s.len && piece.b <= s.freeWidth) { s.freeWidth -= piece.b; return true; }
+    }
+  }
+  return false;
+}
+
+function packIntoNewStrip(panels, piece) {
+  // Orient the piece so the new strip is as short as possible: long
+  // side across the 600 mm width when it fits, else along the length.
+  const len   = piece.b <= PANEL_SHORT ? piece.a : piece.b;
+  const width = piece.b <= PANEL_SHORT ? piece.b : piece.a;
+  for (const panel of panels) {
+    if (len <= panel.freeLen) {
+      panel.freeLen -= len;
+      panel.strips.push({ len, freeWidth: PANEL_SHORT - width });
+      return true;
+    }
+  }
+  return false;
+}
+
+function estimatePurchase(fullCount, cutGroups, wastePct) {
+  const pieces = [];
+  for (const g of cutGroups) {
+    for (let i = 0; i < g.count; i++) pieces.push({ w: g.w, h: g.h });
+  }
+  const cutPanels = packCutPieces(pieces).length;
   const layoutPanels = fullCount + cutPanels;
   const withWaste = Math.ceil(layoutPanels * (1 + wastePct / 100));
-  return { layoutPanels, withWaste };
+  return { layoutPanels, withWaste, cutPanels };
+}
+
+// -------- Layout optimizer --------
+
+// Grid-search anchor offsets (both panel orientations) for the layout
+// that minimizes, in order: cuts narrower than 150 mm, panels to
+// purchase (via the packing estimate), number of cut pieces, and
+// finally distance from the centered anchor (ties prefer the natural
+// orientation). The tiling repeats every 1200 mm along the long axis
+// and 600 mm across — and a 600 mm cross shift equals a 600 mm long
+// shift — so dLong ∈ (−600, 600], dCross ∈ (−300, 300] covers every
+// distinct layout.
+const OPTIMIZE_STEP = 50; // mm search grid
+
+function scoreLayout(roomPoly, longAxisX, offset) {
+  const panels = generatePanels(roomPoly, longAxisX, offset);
+  const group = groupPanels(panels);
+  const purchase = estimatePurchase(group.fullCount, group.cutGroups, 0);
+  return {
+    tiny: panels.filter(p => p.tooSmall).length,
+    panelsNeeded: purchase.layoutPanels,
+    cutCount: group.cutCount,
+  };
+}
+
+function betterLayout(a, b) {
+  if (a.tiny !== b.tiny) return a.tiny < b.tiny;
+  if (a.panelsNeeded !== b.panelsNeeded) return a.panelsNeeded < b.panelsNeeded;
+  if (a.cutCount !== b.cutCount) return a.cutCount < b.cutCount;
+  return a.offsetMag < b.offsetMag;
+}
+
+function layoutOffsetMag(dLong, dCross, isNaturalOrientation) {
+  return Math.abs(dLong) + Math.abs(dCross) + (isNaturalOrientation ? 0 : 1);
+}
+
+function optimizeLayout(roomPoly, naturalLongAxisX, step = OPTIMIZE_STEP) {
+  let best = null;
+  for (const longAxisX of [naturalLongAxisX, !naturalLongAxisX]) {
+    for (let dLong = -PANEL_LONG / 2 + step; dLong <= PANEL_LONG / 2; dLong += step) {
+      for (let dCross = -PANEL_SHORT / 2 + step; dCross <= PANEL_SHORT / 2; dCross += step) {
+        const offset = longAxisX ? { dx: dLong, dy: dCross } : { dx: dCross, dy: dLong };
+        const s = scoreLayout(roomPoly, longAxisX, offset);
+        s.longAxisX = longAxisX;
+        s.offset = offset;
+        s.offsetMag = layoutOffsetMag(dLong, dCross, longAxisX === naturalLongAxisX);
+        if (!best || betterLayout(s, best)) best = s;
+      }
+    }
+  }
+  return best;
 }
 
 // -------- Screw placement --------
@@ -403,7 +603,14 @@ function estimatePurchase(fullCount, cutGroups, wastePct) {
 // on the long edges at the long-axis midpoint, all 25mm inset.
 // For cut panels we use the same rule applied to the cut's own bounding
 // box, omitting the middle pair when the long side is too short to need it.
-function placeScrews(panel) {
+//
+// When `battens` is passed, every screw is checked against the batten
+// layout — a screw only holds if it goes into wood. Screws with no batten
+// beneath them are moved along the cross axis (perpendicular to the
+// batten direction) to the nearest batten that is still inside the cut
+// polygon; if none is reachable within SCREW_SNAP_MAX the screw keeps
+// its position and is flagged `offBatten` so the UI can warn about it.
+function placeScrews(panel, battens, battenWidth, longAxisX) {
   const { x, y, w, h } = panel;
   if (w < 60 || h < 60) return [];
 
@@ -424,12 +631,80 @@ function placeScrews(panel) {
   }
   // For shaped (non-rectangular) cuts, drop screws that fall outside
   // the actual cut polygon (e.g. on the wrong side of a diagonal wall).
-  if (panel.isRectangular) return candidates;
-  return candidates.filter(c => pointInPolygon(c, panel.polygon));
+  const screws = panel.isRectangular
+    ? candidates
+    : candidates.filter(c => pointInPolygon(c, panel.polygon));
+
+  if (!battens) return screws;
+  return snapScrewsToBattens(screws, panel, battens, battenWidth, longAxisX);
+}
+
+const SCREW_SNAP_MAX = 300;      // max mm a screw may move to reach a batten
+const SCREW_BATTEN_MARGIN = 2;   // keep snapped screws off the batten's edge
+
+function screwOnBatten(s, battens, battenWidth) {
+  for (const b of battens) {
+    if (b.perimeter) {
+      if (pointInPolygon(s, b.corners)) return true;
+    } else if (b.horizontal) {
+      if (Math.abs(s.y - b.y) <= battenWidth / 2 &&
+          s.x >= b.x0 - 1e-6 && s.x <= b.x1 + 1e-6) return true;
+    } else {
+      if (Math.abs(s.x - b.x) <= battenWidth / 2 &&
+          s.y >= b.y0 - 1e-6 && s.y <= b.y1 + 1e-6) return true;
+    }
+  }
+  return false;
+}
+
+function snapScrewsToBattens(screws, panel, battens, battenWidth, longAxisX) {
+  const out = [];
+  for (const s of screws) {
+    if (screwOnBatten(s, battens, battenWidth)) { out.push(s); continue; }
+    out.push(snapToNearestBatten(s, panel, battens, battenWidth, longAxisX)
+             || { ...s, offBatten: true });
+  }
+  // Snapping can pull two screws onto the same spot (e.g. both corners
+  // of a shallow sliver land on one batten) — keep only the first.
+  return out.filter((s, i) =>
+    out.findIndex(t => Math.hypot(t.x - s.x, t.y - s.y) < 10) === i);
+}
+
+function snapToNearestBatten(s, panel, battens, battenWidth, longAxisX) {
+  const cross = longAxisX ? s.y : s.x;
+  let best = null, bestDist = Infinity;
+  for (const b of battens) {
+    let lo, hi;
+    if (b.perimeter) {
+      const cs = longAxisX ? b.corners.map(c => c.y) : b.corners.map(c => c.x);
+      lo = Math.min(...cs); hi = Math.max(...cs);
+    } else if (b.horizontal) {
+      lo = b.y - battenWidth / 2; hi = b.y + battenWidth / 2;
+    } else {
+      lo = b.x - battenWidth / 2; hi = b.x + battenWidth / 2;
+    }
+    const target = Math.max(lo + SCREW_BATTEN_MARGIN,
+                   Math.min(hi - SCREW_BATTEN_MARGIN, cross));
+    const dist = Math.abs(target - cross);
+    if (dist >= bestDist || dist > SCREW_SNAP_MAX) continue;
+    const cand = longAxisX ? { x: s.x, y: target } : { x: target, y: s.y };
+    // Must actually land on this batten (slanted perimeter battens have
+    // a wider bbox than their real footprint) and stay inside the cut.
+    if (!screwOnBatten(cand, [b], battenWidth)) continue;
+    if (!pointInPolygon(cand, panel.polygon)) continue;
+    best = { ...cand, snapped: true };
+    bestDist = dist;
+  }
+  return best;
 }
 
 function totalScrewCount(panels) {
-  return panels.reduce((n, p) => n + placeScrews(p).length, 0);
+  return panels.reduce((n, p) => n + (p.screws || placeScrews(p)).length, 0);
+}
+
+function offBattenScrewCount(panels) {
+  return panels.reduce((n, p) =>
+    n + (p.screws ? p.screws.filter(s => s.offBatten).length : 0), 0);
 }
 
 // -------- SVG renderer --------
@@ -449,6 +724,7 @@ const THEMES = {
     panelLabel:  { 'font-family': 'sans-serif', 'font-size': 38, fill: '#999',    'text-anchor': 'middle' },
     cutLabel:    { 'font-family': 'sans-serif', 'font-weight': 600, fill: '#92400e', 'text-anchor': 'middle' },
     screw:       { fill: '#333', stroke: '#fff', 'stroke-width': 1.5 },
+    screwWarn:   { fill: '#b91c1c', stroke: '#fff', 'stroke-width': 1.5 },
     offsetDim:   { stroke: '#1a1a1a', 'stroke-width': 1.5, fill: 'none' },
     offsetTick:  { stroke: '#1a1a1a', 'stroke-width': 1.5, fill: 'none' },
     offsetLabel: { 'font-family': 'sans-serif', 'font-size': 38, 'font-weight': 500, fill: '#1a1a1a' },
@@ -467,6 +743,7 @@ const THEMES = {
     panelLabel:  { 'font-family': 'sans-serif', 'font-size': 38, fill: '#888',    'text-anchor': 'middle' },
     cutLabel:    { 'font-family': 'sans-serif', 'font-weight': 600, fill: '#fdba74', 'text-anchor': 'middle' },
     screw:       { fill: '#fb923c', stroke: '#1a1a1a', 'stroke-width': 1.5 },
+    screwWarn:   { fill: '#ef4444', stroke: '#1a1a1a', 'stroke-width': 1.5 },
     offsetDim:   { stroke: '#d4d4d4', 'stroke-width': 1.5, fill: 'none' },
     offsetTick:  { stroke: '#d4d4d4', 'stroke-width': 1.5, fill: 'none' },
     offsetLabel: { 'font-family': 'sans-serif', 'font-size': 38, 'font-weight': 500, fill: '#e6e6e6' },
@@ -491,7 +768,7 @@ function polygonPointsAttr(poly) {
   return poly.map(p => `${p.x},${p.y}`).join(' ');
 }
 
-function renderSVG(roomPoly, panels, battens, battenWidth, longAxisX) {
+function renderSVG(roomPoly, panels, battens, battenWidth, longAxisX, offset) {
   const svg = els.svg;
   while (svg.firstChild) svg.removeChild(svg.firstChild);
 
@@ -583,7 +860,7 @@ function renderSVG(roomPoly, panels, battens, battenWidth, longAxisX) {
     drawPolygonEdgeLabels(gDims, p.polygon, {
       fontSize: 30, offset: 38, color: theme.cutEdgeLabel,
       minLength: 160, outward: false, fontWeight: 600,
-      avoid: placeScrews(p),
+      avoid: p.screws || placeScrews(p),
     });
   }
 
@@ -591,8 +868,8 @@ function renderSVG(roomPoly, panels, battens, battenWidth, longAxisX) {
   // approximate for polygons (drawn vs bounding box, not actual walls).
   const pw = longAxisX ? PANEL_LONG  : PANEL_SHORT;
   const ph = longAxisX ? PANEL_SHORT : PANEL_LONG;
-  const ax  = cxBB - pw / 2;
-  const ay  = cyBB - ph / 2;
+  const ax  = cxBB + (offset ? offset.dx || 0 : 0) - pw / 2;
+  const ay  = cyBB + (offset ? offset.dy || 0 : 0) - ph / 2;
   const ax2 = ax + pw;
   const ay2 = ay + ph;
   drawOffsetV(gDims, cxBB, bbox.y0, ay,        `${Math.round(ay - bbox.y0)} mm`);
@@ -602,8 +879,11 @@ function renderSVG(roomPoly, panels, battens, battenWidth, longAxisX) {
 
   const gScrews = el(svg, 'g', { class: 'layer-screws' });
   for (const p of panels) {
-    for (const s of placeScrews(p)) {
-      el(gScrews, 'circle', { cx: s.x, cy: s.y, r: SCREW_R, ...theme.screw });
+    for (const s of (p.screws || placeScrews(p))) {
+      el(gScrews, 'circle', {
+        cx: s.x, cy: s.y, r: SCREW_R,
+        ...(s.offBatten ? theme.screwWarn : theme.screw),
+      });
     }
   }
 
@@ -751,6 +1031,7 @@ function renderSummary(roomPoly, group, purchase, wastePct, screwCount, battenMe
     <div class="stat"><span>Pieces in layout</span><strong>${group.totalPieces}</strong></div>
     <div class="stat"><span>Full panels (uncut)</span><strong>${group.fullCount}</strong></div>
     <div class="stat"><span>Cut pieces</span><strong>${group.cutCount}</strong></div>
+    <div class="stat" style="font-size:0.78rem; color:#888;"><span>cut from (complementary cuts paired)</span><span>${purchase.cutPanels} panels</span></div>
     <div class="stat total"><span>Panels to purchase</span><strong>${purchase.withWaste}</strong></div>
     <div class="stat" style="font-size:0.78rem; color:#888;"><span>incl. ${wastePct}% waste</span><span>(${purchase.layoutPanels} before waste)</span></div>
     <div class="stat total"><span>Screws needed</span><strong>${screwCount}</strong></div>
@@ -767,7 +1048,7 @@ function renderSummary(roomPoly, group, purchase, wastePct, screwCount, battenMe
   `;
 }
 
-function renderCutList(group) {
+function renderCutList(group, offBattenScrews) {
   const { fullCount, cutGroups } = group;
   let rows = '';
   rows += `<tr>
@@ -800,7 +1081,60 @@ function renderCutList(group) {
       One or more cuts are smaller than 150 mm. These are awkward to install — consider shifting the anchor by 300 mm (e.g. nudge the room dimensions slightly) or rotating panel orientation to improve the layout.
     </div>`;
   }
+  if (offBattenScrews > 0) {
+    html += `<div class="warn-banner">
+      ${offBattenScrews} screw${offBattenScrews === 1 ? ' has' : 's have'} no batten beneath (marked red in the drawing) — plan an extra batten or noggin at those spots.
+    </div>`;
+  }
   els.cutList.innerHTML = html;
+}
+
+function fmtSigned(n) { return (n > 0 ? '+' : '') + Math.round(n); }
+
+// Status line under the optimize/re-center buttons. `extra` is a
+// transient message (optimizer outcome) appended after the state.
+function renderAnchorStatus(extra) {
+  if (!els.anchorStatus) return;
+  const { dx, dy } = anchorOffset;
+  let txt = (dx === 0 && dy === 0)
+    ? 'Anchor: centered'
+    : `Anchor offset: x ${fmtSigned(dx)} · y ${fmtSigned(dy)} mm`;
+  if (extra) txt += ` — ${extra}`;
+  els.anchorStatus.textContent = txt;
+}
+
+// Synchronous optimizer entry point (the button handler wraps this in
+// a timeout so the "Optimizing…" label can paint first). Applies the
+// best layout and reports what improved vs the current one.
+function runOptimize() {
+  const { polygon: roomPoly, polygonErrors } = readInputs();
+  if (polygonErrors.length || roomPoly.length < 3) return;
+
+  const bb = polygonBBox(roomPoly);
+  const naturalLongAxisX = bb.w >= bb.h;
+  const currentLongAxisX = panelRotated ? !naturalLongAxisX : naturalLongAxisX;
+
+  const current = scoreLayout(roomPoly, currentLongAxisX, anchorOffset);
+  const cur = { dLong: currentLongAxisX ? anchorOffset.dx : anchorOffset.dy,
+                dCross: currentLongAxisX ? anchorOffset.dy : anchorOffset.dx };
+  current.offsetMag = layoutOffsetMag(cur.dLong, cur.dCross, currentLongAxisX === naturalLongAxisX);
+
+  const best = optimizeLayout(roomPoly, naturalLongAxisX);
+  if (!betterLayout(best, current)) {
+    renderAnchorStatus('already optimal');
+    return;
+  }
+
+  panelRotated = best.longAxisX !== naturalLongAxisX;
+  localStorage.setItem('troldtekt-rotated', String(panelRotated));
+  anchorOffset = best.offset;
+  update();
+
+  const parts = [];
+  if (best.tiny < current.tiny) parts.push(`cuts < 150 mm: ${current.tiny} → ${best.tiny}`);
+  if (best.panelsNeeded < current.panelsNeeded) parts.push(`panels: ${current.panelsNeeded} → ${best.panelsNeeded} (before waste)`);
+  if (best.cutCount < current.cutCount) parts.push(`cut pieces: ${current.cutCount} → ${best.cutCount}`);
+  renderAnchorStatus(parts.length ? `optimized · ${parts.join(' · ')}` : 'optimized');
 }
 
 function updateLayerClasses() {
@@ -814,7 +1148,7 @@ function updateLayerClasses() {
 // -------- Main update --------
 
 function readInputs() {
-  const { poly, errors } = parsePolygon(els.polygon.value);
+  const { poly, errors, notes } = parsePolygon(els.polygon.value);
   const waste = clamp(parseFloat(els.waste.value), 0, 50);
   const panelPrice     = clamp(parseFloat(els.panelPrice.value),     0, 1e6);
   const screwPackPrice = clamp(parseFloat(els.screwPackPrice.value), 0, 1e6);
@@ -823,6 +1157,7 @@ function readInputs() {
   return {
     polygon: poly,
     polygonErrors: errors,
+    polygonNotes: notes,
     waste:          isFinite(waste)          ? waste          : 0,
     panelPrice:     isFinite(panelPrice)     ? panelPrice     : 0,
     screwPackPrice: isFinite(screwPackPrice) ? screwPackPrice : 0,
@@ -848,7 +1183,7 @@ function computeCosts(purchase, screwCount, battenMeters, panelPrice, screwPackP
 
 let lastState = null;
 function update() {
-  const { polygon: roomPoly, polygonErrors, waste, panelPrice, screwPackPrice, battenPrice, battenWidth } = readInputs();
+  const { polygon: roomPoly, polygonErrors, polygonNotes, waste, panelPrice, screwPackPrice, battenPrice, battenWidth } = readInputs();
 
   // Status line under the polygon textarea
   if (polygonErrors.length || roomPoly.length < 3) {
@@ -860,32 +1195,61 @@ function update() {
   const m2 = polygonArea(roomPoly) / 1e6;
   els.polygonStatus.className = 'polygon-status ok';
   els.polygonStatus.textContent =
-    `${roomPoly.length} vertices · bbox ${Math.round(bb.w)}×${Math.round(bb.h)} mm · ${m2.toFixed(2)} m²`;
+    `${roomPoly.length} vertices · bbox ${Math.round(bb.w)}×${Math.round(bb.h)} mm · ${m2.toFixed(2)} m²`
+    + (polygonNotes.length ? ` · ${polygonNotes.join(' · ')}` : '');
 
   const naturalLongAxisX = bb.w >= bb.h;
   const longAxisX = panelRotated ? !naturalLongAxisX : naturalLongAxisX;
-  const panels = generatePanels(roomPoly, longAxisX);
-  const battens = generateBattens(roomPoly, battenWidth, longAxisX);
+  const panels = generatePanels(roomPoly, longAxisX, anchorOffset);
+  const battens = generateBattens(roomPoly, battenWidth, longAxisX, anchorOffset);
   const battenMeters = totalBattenLength(battens) / 1000;
+  for (const p of panels) p.screws = placeScrews(p, battens, battenWidth, longAxisX);
   const group  = groupPanels(panels);
   const purchase = estimatePurchase(group.fullCount, group.cutGroups, waste);
   const screwCount = totalScrewCount(panels);
+  const offBatten = offBattenScrewCount(panels);
   const costs = computeCosts(purchase, screwCount, battenMeters, panelPrice, screwPackPrice, battenPrice);
-  renderSVG(roomPoly, panels, battens, battenWidth, longAxisX);
+  renderSVG(roomPoly, panels, battens, battenWidth, longAxisX, anchorOffset);
   renderSummary(roomPoly, group, purchase, waste, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice);
-  renderCutList(group);
+  renderCutList(group, offBatten);
+  renderAnchorStatus();
   updateLayerClasses();
-  lastState = { roomPoly, waste, panels, battens, battenMeters, battenWidth, group, purchase, screwCount, costs, panelPrice, screwPackPrice, battenPrice };
+  lastState = { roomPoly, waste, panels, battens, battenMeters, battenWidth, group, purchase, screwCount, offBatten, costs, panelPrice, screwPackPrice, battenPrice };
 }
 
-[els.polygon, els.waste, els.panelPrice, els.screwPackPrice, els.battenPrice, els.battenWidth].forEach(i => i.addEventListener('input', update));
-[els.showDims, els.showLab, els.showCuts, els.showScrews, els.showBattens].forEach(c => c.addEventListener('change', updateLayerClasses));
-els.exportBtn.addEventListener('click', exportPDF);
-els.rotateBtn.addEventListener('click', () => {
-  panelRotated = !panelRotated;
-  localStorage.setItem('troldtekt-rotated', String(panelRotated));
-  update();
-});
+if (isBrowser) {
+  // A new room shape invalidates a tuned anchor offset — reset it.
+  els.polygon.addEventListener('input', () => {
+    anchorOffset = { dx: 0, dy: 0 };
+    update();
+  });
+  [els.waste, els.panelPrice, els.screwPackPrice, els.battenPrice, els.battenWidth].forEach(i => i.addEventListener('input', update));
+  [els.showDims, els.showLab, els.showCuts, els.showScrews, els.showBattens].forEach(c => c.addEventListener('change', updateLayerClasses));
+  els.exportBtn.addEventListener('click', exportPDF);
+  els.rotateBtn.addEventListener('click', () => {
+    panelRotated = !panelRotated;
+    localStorage.setItem('troldtekt-rotated', String(panelRotated));
+    anchorOffset = { dx: 0, dy: 0 }; // offset was tuned to the other axis
+    update();
+  });
+  els.optimizeBtn.addEventListener('click', () => {
+    const btn = els.optimizeBtn;
+    const prevText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Optimizing…';
+    setTimeout(() => {
+      try { runOptimize(); }
+      finally {
+        btn.disabled = false;
+        btn.textContent = prevText;
+      }
+    }, 30);
+  });
+  els.recenterBtn.addEventListener('click', () => {
+    anchorOffset = { dx: 0, dy: 0 };
+    update();
+  });
+}
 
 // -------- Theme (light / dark) --------
 
@@ -901,13 +1265,15 @@ function initTheme() {
     ? 'dark' : 'light';
   applyTheme(stored || preferred);
 }
-els.themeToggle.addEventListener('click', () => {
-  const next = document.body.classList.contains('dark') ? 'light' : 'dark';
-  localStorage.setItem('troldtekt-theme', next);
-  applyTheme(next);
-  update();
-});
-initTheme();
+if (isBrowser) {
+  els.themeToggle.addEventListener('click', () => {
+    const next = document.body.classList.contains('dark') ? 'light' : 'dark';
+    localStorage.setItem('troldtekt-theme', next);
+    applyTheme(next);
+    update();
+  });
+  initTheme();
+}
 
 // -------- Room templates (inspired by the floor plan) --------
 
@@ -962,6 +1328,7 @@ function renderTemplates() {
 
 function applyTemplate(template, card) {
   els.polygon.value = template.polygon.map(p => `${p.x}, ${p.y}`).join('\n');
+  anchorOffset = { dx: 0, dy: 0 };
   if (card) {
     document.querySelectorAll('.template-card.active').forEach(c => c.classList.remove('active'));
     card.classList.add('active');
@@ -969,8 +1336,10 @@ function applyTemplate(template, card) {
   update();
 }
 
-renderTemplates();
-update();
+if (isBrowser) {
+  renderTemplates();
+  update();
+}
 
 // -------- PDF export --------
 
@@ -987,7 +1356,7 @@ async function exportPDF() {
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
-    const { roomPoly, waste, group, purchase, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice } = lastState;
+    const { roomPoly, waste, group, purchase, screwCount, offBatten, battenMeters, costs, panelPrice, screwPackPrice, battenPrice } = lastState;
     const bb = polygonBBox(roomPoly);
     const W = Math.round(bb.w), L = Math.round(bb.h);
 
@@ -1041,12 +1410,15 @@ async function exportPDF() {
       `Ceiling area: ${m2.toFixed(2)} m²`,
       `Pieces in layout: ${group.totalPieces}`,
       `Full panels (uncut): ${group.fullCount}`,
-      `Cut pieces: ${group.cutCount}`,
+      `Cut pieces: ${group.cutCount}  (cut from ${purchase.cutPanels} source panels, complementary cuts paired)`,
       `Panels to purchase (incl. ${waste}% waste): ${purchase.withWaste}`,
       `   – before waste: ${purchase.layoutPanels}`,
       `Screws needed: ${screwCount}  (${costs.screwPacks} pack${costs.screwPacks === 1 ? '' : 's'} of 100)`,
       `Battens needed: ${battenMeters.toFixed(2)} m  (edges along long axis + interior @ 600 mm)`,
     ];
+    if (offBatten > 0) {
+      lines.push(`NOTE: ${offBatten} screw${offBatten === 1 ? '' : 's'} without a batten beneath — add battens/noggins there.`);
+    }
     for (const line of lines) { pdf.text(line, margin, y); y += 5.2; }
     y += 6;
 
@@ -1136,4 +1508,13 @@ async function exportPDF() {
   }
 }
 
-window.__troldtekt = { generatePanels, generateBattens, groupPanels, estimatePurchase, totalBattenLength };
+const __api = {
+  parsePolygon, polygonBBox, polygonArea, polygonSignedArea, polygonCentroid,
+  pointInPolygon, clipPolygonByRect, findSelfIntersection, segmentsIntersect,
+  generatePanels, generateBattens, totalBattenLength,
+  groupPanels, piecesPerPanel, estimatePurchase, packCutPieces,
+  scoreLayout, optimizeLayout, betterLayout,
+  placeScrews, screwOnBatten, totalScrewCount, offBattenScrewCount,
+};
+if (isBrowser) window.__troldtekt = { ...__api, runOptimize };
+if (typeof module !== 'undefined' && module.exports) module.exports = __api;
