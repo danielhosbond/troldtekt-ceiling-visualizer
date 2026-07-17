@@ -224,5 +224,11 @@ CDN-loaded at runtime, pinned with SRI integrity hashes:
 
 Everything except PDF export works offline once the page is loaded;
 export fails with a clear message when the libraries are unavailable.
-UI language is English with Danish domain terms kept where they are
-the trade vocabulary (halv forbandt, room-template names, kr. prices).
+
+## Language
+
+The whole UI (including the PDF) is available in English and Danish —
+the button in the top-right corner switches. The choice is persisted in
+`localStorage` and defaults to the browser language; it is a viewer
+preference, so it is not part of share URLs. "Halv forbandt" stays as
+the trade term in both languages, and prices are always in kr.

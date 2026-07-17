@@ -153,5 +153,12 @@ All logic lives in `app.js`.
 - **Print**: `@media print` in style.css (must stay last, after the
   dark-mode rules) plus beforeprint/afterprint handlers that swap the
   SVG to the light palette.
-- **Language**: UI chrome and PDF text are English; Danish stays for
-  trade terms (halv forbandt), template room names, and kr. prices.
+- **Language (en/da)**: `STRINGS` table + `t(key, ...args)` at the top
+  of app.js; static HTML uses `data-i18n` / `data-i18n-title`
+  attributes resolved by `applyLanguage()` (also swaps template names
+  via `nameEn` and refreshes programmatic labels). The header button
+  toggles; persisted as `troldtekt-lang`, defaults to
+  `navigator.language`, not in share URLs. Every user-visible string —
+  including parse errors and PDF text — must go through `t()`; tests
+  enforce en/da key and placeholder parity, and the geometry tests
+  match the en strings (the Node default).

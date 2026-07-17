@@ -344,6 +344,22 @@ screwChecks('L-shape', LSHAPE);
         'setting out: sub-grid room reports no chalk lines');
 }
 
+// ---- i18n string table ----
+{
+  const en = Object.keys(T.STRINGS.en).sort();
+  const da = Object.keys(T.STRINGS.da).sort();
+  check(en.length === da.length && en.every((k, i) => k === da[i]),
+        'i18n: en and da have exactly the same keys');
+  // Placeholder parity: {0}, {1}… must appear in both translations.
+  const holes = s => (String(s).match(/\{\d\}/g) || []).sort().join('');
+  const mismatched = en.filter(k => holes(T.STRINGS.en[k]) !== holes(T.STRINGS.da[k]));
+  check(mismatched.length === 0,
+        `i18n: placeholders match in both languages (${mismatched.join(', ') || 'ok'})`);
+  check(T.t('statusOk', 4, 100, 200, '1.00') === '4 vertices · bbox 100×200 mm · 1.00 m²',
+        't: placeholder interpolation works');
+  check(T.t('no-such-key') === 'no-such-key', 't: unknown keys fall through');
+}
+
 // ---- state hash round-trip ----
 {
   const state = {

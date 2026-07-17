@@ -8,90 +8,91 @@
 </head>
 <body>
 <header>
-  <h1>Troldtekt Panel Calculator<span class="muted">600 × 1200 mm · halv forbandt · centered</span></h1>
+  <h1><span data-i18n="appTitle">Troldtekt Panel Calculator</span><span class="muted" data-i18n="subtitle">600 × 1200 mm · halv forbandt · centered</span></h1>
   <div class="header-actions">
-    <button id="copy-link" class="theme-toggle" type="button" title="Copy a shareable link to this layout">Copy link</button>
+    <button id="lang-toggle" class="theme-toggle" type="button" aria-label="Skift sprog / switch language">Dansk</button>
+    <button id="copy-link" class="theme-toggle" type="button" data-i18n-title="copyLink">Copy link</button>
     <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle dark mode">Dark mode</button>
   </div>
 </header>
 <section class="templates" aria-label="Room templates">
-  <span class="templates-label">Templates</span>
+  <span class="templates-label" data-i18n="templates">Templates</span>
   <div class="templates-inner" id="templates"></div>
 </section>
 <main>
   <aside class="controls">
     <div class="field">
-      <label for="polygon">Room polygon <span class="unit">vertices in mm</span></label>
+      <label for="polygon"><span data-i18n="polygonLabel">Room polygon</span> <span class="unit" data-i18n="polygonUnit">vertices in mm</span></label>
       <textarea id="polygon" rows="6" spellcheck="false">0, 0
 3600, 0
 3600, 4800
 0, 4800</textarea>
-      <div class="hint">One vertex per line as "x, y" in mm. Or edit in the drawing: drag corners, drag an edge midpoint to add a corner, double-click a corner to remove it. Ctrl+Z undoes drawing edits.</div>
+      <div class="hint" data-i18n="polygonHint">One vertex per line as "x, y" in mm. Or edit in the drawing: drag corners, drag an edge midpoint to add a corner, double-click a corner to remove it. Ctrl+Z undoes drawing edits.</div>
       <div class="polygon-status" id="polygon-status"></div>
     </div>
-    <button class="secondary" id="rotate-panels" type="button">Rotate panels 90°</button>
+    <button class="secondary" id="rotate-panels" type="button" data-i18n="rotateBtn">Rotate panels 90°</button>
     <div class="btn-row">
-      <button class="secondary" id="optimize" type="button">Optimize layout</button>
-      <button class="secondary" id="recenter" type="button">Re-center</button>
+      <button class="secondary" id="optimize" type="button" data-i18n="optimizeBtn">Optimize layout</button>
+      <button class="secondary" id="recenter" type="button" data-i18n="recenterBtn">Re-center</button>
     </div>
     <div class="anchor-status" id="anchor-status"></div>
     <div class="field">
-      <label for="waste">Waste allowance <span class="unit">%</span></label>
+      <label for="waste"><span data-i18n="wasteLabel">Waste allowance</span> <span class="unit">%</span></label>
       <input type="number" id="waste" value="10" min="0" max="50" step="1">
     </div>
     <div class="field">
-      <label for="panel-price">Panel price <span class="unit">kr. / panel</span></label>
+      <label for="panel-price"><span data-i18n="panelPriceLabel">Panel price</span> <span class="unit" data-i18n="panelPriceUnit">kr. / panel</span></label>
       <input type="number" id="panel-price" value="129" min="0" step="1">
     </div>
     <div class="field">
-      <label for="screw-pack-price">Screw pack price <span class="unit">kr. / 100 screws</span></label>
+      <label for="screw-pack-price"><span data-i18n="screwPackLabel">Screw pack price</span> <span class="unit" data-i18n="screwPackUnit">kr. / 100 screws</span></label>
       <input type="number" id="screw-pack-price" value="170" min="0" step="1">
     </div>
     <div class="field">
-      <label for="batten-price">Batten price <span class="unit">kr. / meter</span></label>
+      <label for="batten-price"><span data-i18n="battenPriceLabel">Batten price</span> <span class="unit" data-i18n="battenPriceUnit">kr. / meter</span></label>
       <input type="number" id="batten-price" value="10" min="0" step="0.5">
     </div>
     <div class="field">
-      <label for="batten-width">Batten width <span class="unit">mm</span></label>
+      <label for="batten-width"><span data-i18n="battenWidthLabel">Batten width</span> <span class="unit">mm</span></label>
       <input type="number" id="batten-width" value="95" min="20" max="200" step="5">
     </div>
     <div class="field">
-      <label class="toggle" title="Troldtekt boards have a directional surface pattern. When checked, cut pieces are never rotated 90 degrees in the purchase estimate and cutting diagrams.">
-        <input type="checkbox" id="respect-direction"> Respect panel direction
+      <label class="toggle" data-i18n-title="respectDirTitle">
+        <input type="checkbox" id="respect-direction"> <span data-i18n="respectDirLabel">Respect panel direction</span>
       </label>
-      <div class="hint">No 90&deg; rotated cuts (directional surface). May need more panels.</div>
+      <div class="hint" data-i18n="respectDirHint">No 90&deg; rotated cuts (directional surface). May need more panels.</div>
     </div>
 
     <div class="toggles">
-      <div class="toggles-title">Measurement layers</div>
-      <label class="toggle"><input type="checkbox" id="show-dims" checked> Room dimensions</label>
-      <label class="toggle"><input type="checkbox" id="show-labels" checked> Full panel labels</label>
-      <label class="toggle"><input type="checkbox" id="show-cuts" checked> Cut measurements</label>
-      <label class="toggle"><input type="checkbox" id="show-screws" checked> Screw positions</label>
-      <label class="toggle"><input type="checkbox" id="show-battens" checked> Wooden battens</label>
-      <label class="toggle"><input type="checkbox" id="show-handles" checked> Corner edit handles</label>
+      <div class="toggles-title" data-i18n="layersTitle">Measurement layers</div>
+      <label class="toggle"><input type="checkbox" id="show-dims" checked> <span data-i18n="layerDims">Room dimensions</span></label>
+      <label class="toggle"><input type="checkbox" id="show-labels" checked> <span data-i18n="layerLabels">Full panel labels</span></label>
+      <label class="toggle"><input type="checkbox" id="show-cuts" checked> <span data-i18n="layerCuts">Cut measurements</span></label>
+      <label class="toggle"><input type="checkbox" id="show-screws" checked> <span data-i18n="layerScrews">Screw positions</span></label>
+      <label class="toggle"><input type="checkbox" id="show-battens" checked> <span data-i18n="layerBattens">Wooden battens</span></label>
+      <label class="toggle"><input type="checkbox" id="show-handles" checked> <span data-i18n="layerHandles">Corner edit handles</span></label>
     </div>
 
     <div class="summary" id="summary"></div>
-    <button class="primary" id="export">Export PDF</button>
+    <button class="primary" id="export" data-i18n="exportBtn">Export PDF</button>
   </aside>
 
   <section>
     <div class="canvas-area">
       <div class="zoom-controls">
-        <button type="button" id="zoom-in" title="Zoom in (Ctrl+scroll or pinch)" aria-label="Zoom in">+</button>
-        <button type="button" id="zoom-out" title="Zoom out (Ctrl+scroll or pinch)" aria-label="Zoom out">&minus;</button>
-        <button type="button" id="zoom-fit" title="Fit the room in view" aria-label="Fit drawing">Fit</button>
+        <button type="button" id="zoom-in" data-i18n-title="zoomInTitle" aria-label="Zoom in">+</button>
+        <button type="button" id="zoom-out" data-i18n-title="zoomOutTitle" aria-label="Zoom out">&minus;</button>
+        <button type="button" id="zoom-fit" data-i18n-title="zoomFitTitle" data-i18n="zoomFitLabel" aria-label="Fit drawing">Fit</button>
       </div>
       <svg id="drawing" xmlns="http://www.w3.org/2000/svg"></svg>
       <div class="legend">
-        <span><span class="sw" style="background:#fcfcfa; border:1px solid #999;"></span>Full panel</span>
-        <span><span class="sw" style="background:#fef3c7; border:1px solid #b08a3a;"></span>Cut panel</span>
-        <span><span class="sw" style="background:#fecaca; border:1px solid #b91c1c;"></span>&lt; 150 mm cut</span>
-        <span><span class="sw" style="background:#333; border-radius:50%;"></span>Screw</span>
-        <span><span class="sw" style="background:#b91c1c; border-radius:50%;"></span>Screw without batten</span>
-        <span><span class="sw" style="background:#c69f6c; border:1px solid #8a5a2b;"></span>Batten</span>
-        <span class="zoom-hint">Zoom: Ctrl+scroll, pinch, or buttons · drag empty space to pan</span>
+        <span><span class="sw" style="background:#fcfcfa; border:1px solid #999;"></span><span data-i18n="legFull">Full panel</span></span>
+        <span><span class="sw" style="background:#fef3c7; border:1px solid #b08a3a;"></span><span data-i18n="legCut">Cut panel</span></span>
+        <span><span class="sw" style="background:#fecaca; border:1px solid #b91c1c;"></span><span data-i18n="legWarn">&lt; 150 mm cut</span></span>
+        <span><span class="sw" style="background:#333; border-radius:50%;"></span><span data-i18n="legScrew">Screw</span></span>
+        <span><span class="sw" style="background:#b91c1c; border-radius:50%;"></span><span data-i18n="legScrewWarn">Screw without batten</span></span>
+        <span><span class="sw" style="background:#c69f6c; border:1px solid #8a5a2b;"></span><span data-i18n="legBatten">Batten</span></span>
+        <span class="zoom-hint" data-i18n="zoomHint">Zoom: Ctrl+scroll, pinch, or buttons · drag empty space to pan</span>
       </div>
     </div>
     <div class="cut-list" id="cut-list"></div>

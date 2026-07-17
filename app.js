@@ -14,6 +14,198 @@ const SCREW_MID_THRESHOLD = 800; // long-axis length needed before mid screws ar
 // functions can be required and unit-tested.
 const isBrowser = typeof document !== 'undefined';
 
+// -------- Language (en / da) --------
+// Static HTML carries data-i18n / data-i18n-title attributes resolved
+// by applyLanguage(); dynamic strings go through t(key, ...args) with
+// {0}, {1}… placeholders. The language is a viewer preference (like
+// the theme): persisted in localStorage, defaulting to the browser
+// language, and deliberately NOT part of the share URL.
+const STRINGS = {
+  en: {
+    appTitle: 'Troldtekt Panel Calculator',
+    subtitle: '600 × 1200 mm · halv forbandt · centered',
+    copyLink: 'Copy link', copied: 'Copied!', copyFailed: 'Copy failed',
+    darkMode: 'Dark mode', lightMode: 'Light mode',
+    templates: 'Templates',
+    polygonLabel: 'Room polygon', polygonUnit: 'vertices in mm',
+    polygonHint: 'One vertex per line as "x, y" in mm. Or edit in the drawing: drag corners, drag an edge midpoint to add a corner, double-click a corner to remove it. Ctrl+Z undoes drawing edits.',
+    statusFallback: 'Polygon needs ≥ 3 vertices',
+    rotateBtn: 'Rotate panels 90°',
+    optimizeBtn: 'Optimize layout', recenterBtn: 'Re-center', optimizing: 'Optimizing…',
+    anchorCentered: 'Anchor: centered',
+    anchorOffsetTxt: 'Anchor offset: x {0} · y {1} mm',
+    alreadyOptimal: 'already optimal', optimized: 'optimized',
+    optTiny: 'cuts < 150 mm: {0} → {1}',
+    optPanels: 'panels: {0} → {1} (before waste)',
+    optCuts: 'cut pieces: {0} → {1}',
+    wasteLabel: 'Waste allowance',
+    panelPriceLabel: 'Panel price', panelPriceUnit: 'kr. / panel',
+    screwPackLabel: 'Screw pack price', screwPackUnit: 'kr. / 100 screws',
+    battenPriceLabel: 'Batten price', battenPriceUnit: 'kr. / meter',
+    battenWidthLabel: 'Batten width',
+    respectDirLabel: 'Respect panel direction',
+    respectDirHint: 'No 90° rotated cuts (directional surface). May need more panels.',
+    respectDirTitle: 'Troldtekt boards have a directional surface pattern. When checked, cut pieces are never rotated 90 degrees in the purchase estimate and cutting diagrams.',
+    layersTitle: 'Measurement layers',
+    layerDims: 'Room dimensions', layerLabels: 'Full panel labels',
+    layerCuts: 'Cut measurements', layerScrews: 'Screw positions',
+    layerBattens: 'Wooden battens', layerHandles: 'Corner edit handles',
+    exportBtn: 'Export PDF', generating: 'Generating…',
+    legFull: 'Full panel', legCut: 'Cut panel', legWarn: '< 150 mm cut',
+    legScrew: 'Screw', legScrewWarn: 'Screw without batten', legBatten: 'Batten',
+    zoomHint: 'Zoom: Ctrl+scroll, pinch, or buttons · drag empty space to pan',
+    zoomInTitle: 'Zoom in (Ctrl+scroll or pinch)', zoomOutTitle: 'Zoom out (Ctrl+scroll or pinch)',
+    zoomFitTitle: 'Fit the room in view', zoomFitLabel: 'Fit',
+    statusOk: '{0} vertices · bbox {1}×{2} mm · {3} m²',
+    errLine: 'Line {0}: cannot parse "{1}"', errRange: 'Line {0}: out of range',
+    errMin3: 'Need at least 3 vertices.', errZero: 'Polygon has zero area.',
+    errSelf: 'Polygon self-intersects: wall {0} crosses wall {1}.',
+    noteReversed: 'reversed to clockwise', noteDupes: 'duplicate vertices dropped',
+    sumTitle: 'Summary', sumBBox: 'Bounding box', sumArea: 'Ceiling area',
+    sumPieces: 'Pieces in layout', sumFull: 'Full panels (uncut)', sumCut: 'Cut pieces',
+    sumCutFrom: 'cut from (complementary cuts paired)', sumCutFromVal: '{0} panels',
+    sumPurchase: 'Panels to purchase',
+    sumInclWaste: 'incl. {0}% waste', sumBeforeWaste: '({0} before waste)',
+    sumScrews: 'Screws needed', sumScrewPacks: 'screw packs of 100',
+    sumBattens: 'Battens needed',
+    sumBattensNote: 'edges along long axis + interior @ 600 mm',
+    soBatten: 'First batten centerline', soBattenNote: 'from {0} wall · then 600 mm c/c',
+    soJoint: 'First panel end joint', soJointNote: 'from {0} wall (even rows) · odd rows +600 mm',
+    wallLeft: 'left', wallTop: 'top',
+    costPanels: 'Panel cost', costScrews: 'Screw cost', costBattens: 'Batten cost', costTotal: 'Total',
+    cutListTitle: 'Cut List',
+    thID: 'ID', thQty: 'Qty', thSize: 'Size (mm)', thType: 'Type', thNotes: 'Notes',
+    type_full: 'full', type_edge: 'edge', type_corner: 'corner', type_shaped: 'shaped',
+    perPanel: '{0} per source panel', cutSmallNote: 'cut < 150 mm',
+    warnTiny: 'One or more cuts are smaller than 150 mm. These are awkward to install — consider "Optimize layout" or rotating panel orientation to improve the layout.',
+    warnOffBatten1: '1 screw has no batten beneath (marked red in the drawing) — plan an extra batten or noggin at that spot.',
+    warnOffBattenN: '{0} screws have no batten beneath (marked red in the drawing) — plan an extra batten or noggin at those spots.',
+    diagTitle: 'Cutting Diagrams',
+    diagNote: 'One rectangle per source panel (600 × 1200). Letters match the cut list; blank areas are offcuts.',
+    diagPanel: 'Panel {0}',
+    titleVertex: 'Drag to move corner · double-click to remove',
+    titleEdgeMid: 'Drag to add a corner',
+    pdfRoom: 'Room (bbox): {0} × {1} mm', pdfScale: 'Scale 1:{0}',
+    pdfMode: 'Halv forbandt · centered', pdfPage2: 'Materials & Cut List',
+    pdfArea: 'Ceiling area: {0} m²', pdfPieces: 'Pieces in layout: {0}',
+    pdfFull: 'Full panels (uncut): {0}',
+    pdfCutPieces: 'Cut pieces: {0}  (cut from {1} source panels, complementary cuts paired)',
+    pdfPurchase: 'Panels to purchase (incl. {0}% waste): {1}',
+    pdfBeforeWaste: '   – before waste: {0}',
+    pdfScrews: 'Screws needed: {0}  ({1} packs of 100)',
+    pdfBattens: 'Battens needed: {0} m  (edges along long axis + interior @ 600 mm)',
+    pdfOffBatten: 'NOTE: {0} screw(s) without a batten beneath — add battens/noggins there.',
+    pdfSOBatten: 'Setting out: first batten centerline {0} mm from {1} wall, then 600 mm c/c',
+    pdfSOJoint: '   first panel end joint {0} mm from {1} wall (even rows), 1200 mm c/c, odd rows +600 mm',
+    pdfCost: 'Cost',
+    pdfCostPanels: 'Panels   ({0} × {1})', pdfCostScrews: 'Screws   ({0} × {1})',
+    pdfCostBattens: 'Battens  ({0} m × {1})',
+    pdfCutList: 'Cut list',
+    pdfDiagNote: 'One rectangle per 600 × 1200 source panel. Letters match the cut list; blank areas are offcuts.',
+    alertNoLibs: 'PDF export is unavailable: the jsPDF/svg2pdf libraries could not be loaded from their CDNs. Check your connection and reload the page.',
+    alertExportFailed: 'PDF export failed: ',
+  },
+  da: {
+    appTitle: 'Troldtekt pladeberegner',
+    subtitle: '600 × 1200 mm · halv forbandt · centreret',
+    copyLink: 'Kopiér link', copied: 'Kopieret!', copyFailed: 'Kunne ikke kopiere',
+    darkMode: 'Mørk tilstand', lightMode: 'Lys tilstand',
+    templates: 'Skabeloner',
+    polygonLabel: 'Rumpolygon', polygonUnit: 'hjørner i mm',
+    polygonHint: 'Ét hjørne pr. linje som "x, y" i mm. Eller redigér i tegningen: træk i hjørnerne, træk i en vægs midtpunkt for at tilføje et hjørne, dobbeltklik på et hjørne for at fjerne det. Ctrl+Z fortryder tegneændringer.',
+    statusFallback: 'Polygonen skal have ≥ 3 hjørner',
+    rotateBtn: 'Rotér plader 90°',
+    optimizeBtn: 'Optimér layout', recenterBtn: 'Centrér igen', optimizing: 'Optimerer…',
+    anchorCentered: 'Anker: centreret',
+    anchorOffsetTxt: 'Ankerforskydning: x {0} · y {1} mm',
+    alreadyOptimal: 'allerede optimalt', optimized: 'optimeret',
+    optTiny: 'snit < 150 mm: {0} → {1}',
+    optPanels: 'plader: {0} → {1} (før spild)',
+    optCuts: 'tilskårne stykker: {0} → {1}',
+    wasteLabel: 'Spildtillæg',
+    panelPriceLabel: 'Pladepris', panelPriceUnit: 'kr. pr. plade',
+    screwPackLabel: 'Skruepakke', screwPackUnit: 'kr. pr. 100 skruer',
+    battenPriceLabel: 'Lægtepris', battenPriceUnit: 'kr. pr. meter',
+    battenWidthLabel: 'Lægtebredde',
+    respectDirLabel: 'Respektér pladeretning',
+    respectDirHint: 'Ingen 90° roterede stykker (retningsbestemt overflade). Kan kræve flere plader.',
+    respectDirTitle: 'Troldtekt-plader har en retningsbestemt overflade. Når slået til, roteres tilskårne stykker aldrig 90° i indkøbsberegningen og skærediagrammerne.',
+    layersTitle: 'Målelag',
+    layerDims: 'Rummål', layerLabels: 'Numre på hele plader',
+    layerCuts: 'Mål på tilskæringer', layerScrews: 'Skruepositioner',
+    layerBattens: 'Trælægter', layerHandles: 'Hjørnehåndtag',
+    exportBtn: 'Eksportér PDF', generating: 'Genererer…',
+    legFull: 'Hel plade', legCut: 'Tilskåret plade', legWarn: '< 150 mm snit',
+    legScrew: 'Skrue', legScrewWarn: 'Skrue uden lægte', legBatten: 'Lægte',
+    zoomHint: 'Zoom: Ctrl+scroll, knib eller knapperne · træk i tom flade for at panorere',
+    zoomInTitle: 'Zoom ind (Ctrl+scroll eller knib)', zoomOutTitle: 'Zoom ud (Ctrl+scroll eller knib)',
+    zoomFitTitle: 'Tilpas rummet til visningen', zoomFitLabel: 'Fit',
+    statusOk: '{0} hjørner · ydre mål {1}×{2} mm · {3} m²',
+    errLine: 'Linje {0}: kan ikke læse "{1}"', errRange: 'Linje {0}: uden for området',
+    errMin3: 'Kræver mindst 3 hjørner.', errZero: 'Polygonen har intet areal.',
+    errSelf: 'Polygonen skærer sig selv: væg {0} krydser væg {1}.',
+    noteReversed: 'vendt til urets retning', noteDupes: 'dublerede hjørner fjernet',
+    sumTitle: 'Oversigt', sumBBox: 'Ydre mål', sumArea: 'Loftareal',
+    sumPieces: 'Stykker i layout', sumFull: 'Hele plader (uskårne)', sumCut: 'Tilskårne stykker',
+    sumCutFrom: 'skåret af (komplementære snit parret)', sumCutFromVal: '{0} plader',
+    sumPurchase: 'Plader at købe',
+    sumInclWaste: 'inkl. {0} % spild', sumBeforeWaste: '({0} før spild)',
+    sumScrews: 'Skruer i alt', sumScrewPacks: 'skruepakker à 100',
+    sumBattens: 'Lægter i alt',
+    sumBattensNote: 'vægge langs lang akse + indvendige pr. 600 mm',
+    soBatten: 'Første lægte-centerlinje', soBattenNote: 'fra {0} væg · derefter 600 mm c/c',
+    soJoint: 'Første pladestød', soJointNote: 'fra {0} væg (lige rækker) · ulige rækker +600 mm',
+    wallLeft: 'venstre', wallTop: 'øverste',
+    costPanels: 'Pladeudgift', costScrews: 'Skrueudgift', costBattens: 'Lægteudgift', costTotal: 'I alt',
+    cutListTitle: 'Skæreliste',
+    thID: 'ID', thQty: 'Antal', thSize: 'Mål (mm)', thType: 'Type', thNotes: 'Noter',
+    type_full: 'hel', type_edge: 'kant', type_corner: 'hjørne', type_shaped: 'formskåret',
+    perPanel: '{0} pr. plade', cutSmallNote: 'snit < 150 mm',
+    warnTiny: 'Et eller flere snit er mindre end 150 mm. De er besværlige at montere — prøv "Optimér layout" eller rotér pladerne.',
+    warnOffBatten1: '1 skrue har ingen lægte under sig (markeret med rødt på tegningen) — planlæg en ekstra lægte dér.',
+    warnOffBattenN: '{0} skruer har ingen lægte under sig (markeret med rødt på tegningen) — planlæg ekstra lægter dér.',
+    diagTitle: 'Skærediagrammer',
+    diagNote: 'Ét rektangel pr. plade (600 × 1200). Bogstaverne matcher skærelisten; tomme områder er afskær.',
+    diagPanel: 'Plade {0}',
+    titleVertex: 'Træk for at flytte hjørnet · dobbeltklik for at fjerne',
+    titleEdgeMid: 'Træk for at tilføje et hjørne',
+    pdfRoom: 'Rum (ydre mål): {0} × {1} mm', pdfScale: 'Skala 1:{0}',
+    pdfMode: 'Halv forbandt · centreret', pdfPage2: 'Materialer & skæreliste',
+    pdfArea: 'Loftareal: {0} m²', pdfPieces: 'Stykker i layout: {0}',
+    pdfFull: 'Hele plader (uskårne): {0}',
+    pdfCutPieces: 'Tilskårne stykker: {0}  (skåret af {1} plader, komplementære snit parret)',
+    pdfPurchase: 'Plader at købe (inkl. {0} % spild): {1}',
+    pdfBeforeWaste: '   – før spild: {0}',
+    pdfScrews: 'Skruer i alt: {0}  ({1} pakker à 100)',
+    pdfBattens: 'Lægter i alt: {0} m  (vægge langs lang akse + indvendige pr. 600 mm)',
+    pdfOffBatten: 'BEMÆRK: {0} skrue(r) uden lægte under — tilføj lægter dér.',
+    pdfSOBatten: 'Afsætning: første lægte-centerlinje {0} mm fra {1} væg, derefter 600 mm c/c',
+    pdfSOJoint: '   første pladestød {0} mm fra {1} væg (lige rækker), 1200 mm c/c, ulige rækker +600 mm',
+    pdfCost: 'Omkostninger',
+    pdfCostPanels: 'Plader   ({0} × {1})', pdfCostScrews: 'Skruer   ({0} × {1})',
+    pdfCostBattens: 'Lægter  ({0} m × {1})',
+    pdfCutList: 'Skæreliste',
+    pdfDiagNote: 'Ét rektangel pr. 600 × 1200-plade. Bogstaverne matcher skærelisten; tomme områder er afskær.',
+    alertNoLibs: 'PDF-eksport er ikke tilgængelig: jsPDF/svg2pdf-bibliotekerne kunne ikke hentes fra CDN. Tjek din forbindelse og genindlæs siden.',
+    alertExportFailed: 'PDF-eksport fejlede: ',
+  },
+};
+
+let lang = 'en';
+if (isBrowser) {
+  lang = localStorage.getItem('troldtekt-lang')
+      || ((navigator.language || '').toLowerCase().startsWith('da') ? 'da' : 'en');
+  if (!STRINGS[lang]) lang = 'en';
+}
+
+function t(key) {
+  let s = (STRINGS[lang] && STRINGS[lang][key]) || STRINGS.en[key] || key;
+  for (let i = 1; i < arguments.length; i++) {
+    s = s.split(`{${i - 1}}`).join(arguments[i]);
+  }
+  return s;
+}
+
 const els = !isBrowser ? null : {
   polygon:  document.getElementById('polygon'),
   polygonStatus: document.getElementById('polygon-status'),
@@ -38,6 +230,7 @@ const els = !isBrowser ? null : {
   cutList:  document.getElementById('cut-list'),
   exportBtn:document.getElementById('export'),
   themeToggle: document.getElementById('theme-toggle'),
+  langToggle: document.getElementById('lang-toggle'),
   rotateBtn: document.getElementById('rotate-panels'),
   optimizeBtn: document.getElementById('optimize'),
   recenterBtn: document.getElementById('recenter'),
@@ -68,10 +261,10 @@ function parsePolygon(text) {
   const notes = [];
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(/^[(\[]?\s*(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)\s*[\])]?$/);
-    if (!m) { errors.push(`Line ${i + 1}: cannot parse "${lines[i]}"`); continue; }
+    if (!m) { errors.push(t('errLine', i + 1, lines[i])); continue; }
     const x = parseFloat(m[1]), y = parseFloat(m[2]);
     if (!isFinite(x) || !isFinite(y) || x < -1 || y < -1 || x > 30000 || y > 30000) {
-      errors.push(`Line ${i + 1}: out of range`);
+      errors.push(t('errRange', i + 1));
       continue;
     }
     raw.push({ x, y });
@@ -89,28 +282,28 @@ function parsePolygon(text) {
     const a = poly[0], b = poly[poly.length - 1];
     if (Math.hypot(a.x - b.x, a.y - b.y) < 0.5) poly.pop();
   }
-  if (poly.length !== raw.length) notes.push('duplicate vertices dropped');
+  if (poly.length !== raw.length) notes.push(t('noteDupes'));
 
   if (poly.length < 3) {
-    errors.push('Need at least 3 vertices.');
+    errors.push(t('errMin3'));
     return { poly, errors, notes };
   }
 
   const signed = polygonSignedArea(poly);
   if (Math.abs(signed) < 1) {
-    errors.push('Polygon has zero area.');
+    errors.push(t('errZero'));
     return { poly, errors, notes };
   }
   // Normalize to clockwise (positive signed area with y pointing down)
   // so downstream geometry always sees one winding.
   if (signed < 0) {
     poly.reverse();
-    notes.push('reversed to clockwise');
+    notes.push(t('noteReversed'));
   }
 
   const cross = findSelfIntersection(poly);
   if (cross) {
-    errors.push(`Polygon self-intersects: wall ${cross[0] + 1} crosses wall ${cross[1] + 1}.`);
+    errors.push(t('errSelf', cross[0] + 1, cross[1] + 1));
   }
   return { poly, errors, notes };
 }
@@ -1131,14 +1324,14 @@ function renderSVG(roomPoly, panels, battens, battenWidth, longAxisX, offset) {
       cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, r: handleR * 0.55,
       'data-edge': i, ...theme.handleMid,
     });
-    el(mid, 'title', {}, 'Drag to add a corner');
+    el(mid, 'title', {}, t('titleEdgeMid'));
   }
   for (let i = 0; i < roomPoly.length; i++) {
     const c = el(gHandles, 'circle', {
       cx: roomPoly[i].x, cy: roomPoly[i].y, r: handleR,
       'data-vertex': i, ...theme.handle,
     });
-    el(c, 'title', {}, 'Drag to move corner · double-click to remove');
+    el(c, 'title', {}, t('titleVertex'));
   }
 }
 
@@ -1313,7 +1506,7 @@ function drawCutDiagrams(pdf, packedPanels, opts) {
     pdf.setTextColor(85, 85, 85);
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(8);
-    pdf.text(`Panel ${idx + 1}`, x + dW / 2, y + dH + 4.5, { align: 'center' });
+    pdf.text(t('diagPanel', idx + 1), x + dW / 2, y + dH + 4.5, { align: 'center' });
     col++;
     if (col >= perRow) { col = 0; x = margin; y += dH + captionH + 4; }
     else x += dW + gap;
@@ -1326,33 +1519,34 @@ function drawCutDiagrams(pdf, packedPanels, opts) {
 function renderSummary(roomPoly, group, purchase, wastePct, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice, so) {
   const bb = polygonBBox(roomPoly);
   const m2 = polygonArea(roomPoly) / 1e6;
+  const wallName = w => w === 'left' ? t('wallLeft') : t('wallTop');
   els.summary.innerHTML = `
-    <h3>Summary</h3>
-    <div class="stat"><span>Bounding box</span><strong>${Math.round(bb.w)} × ${Math.round(bb.h)} mm</strong></div>
-    <div class="stat"><span>Ceiling area</span><strong>${m2.toFixed(2)} m²</strong></div>
-    <div class="stat"><span>Pieces in layout</span><strong>${group.totalPieces}</strong></div>
-    <div class="stat"><span>Full panels (uncut)</span><strong>${group.fullCount}</strong></div>
-    <div class="stat"><span>Cut pieces</span><strong>${group.cutCount}</strong></div>
-    <div class="stat" style="font-size:0.78rem; color:#888;"><span>cut from (complementary cuts paired)</span><span>${purchase.cutPanels} panels</span></div>
-    <div class="stat total"><span>Panels to purchase</span><strong>${purchase.withWaste}</strong></div>
-    <div class="stat" style="font-size:0.78rem; color:#888;"><span>incl. ${wastePct}% waste</span><span>(${purchase.layoutPanels} before waste)</span></div>
-    <div class="stat total"><span>Screws needed</span><strong>${screwCount}</strong></div>
-    <div class="stat" style="font-size:0.78rem; color:#888;"><span>screw packs of 100</span><span>${costs.screwPacks}</span></div>
-    <div class="stat total"><span>Battens needed</span><strong>${battenMeters.toFixed(2)} m</strong></div>
-    <div class="stat" style="font-size:0.78rem; color:#888;"><span>edges along long axis + interior @ 600 mm</span></div>
+    <h3>${t('sumTitle')}</h3>
+    <div class="stat"><span>${t('sumBBox')}</span><strong>${Math.round(bb.w)} × ${Math.round(bb.h)} mm</strong></div>
+    <div class="stat"><span>${t('sumArea')}</span><strong>${m2.toFixed(2)} m²</strong></div>
+    <div class="stat"><span>${t('sumPieces')}</span><strong>${group.totalPieces}</strong></div>
+    <div class="stat"><span>${t('sumFull')}</span><strong>${group.fullCount}</strong></div>
+    <div class="stat"><span>${t('sumCut')}</span><strong>${group.cutCount}</strong></div>
+    <div class="stat" style="font-size:0.78rem; color:#888;"><span>${t('sumCutFrom')}</span><span>${t('sumCutFromVal', purchase.cutPanels)}</span></div>
+    <div class="stat total"><span>${t('sumPurchase')}</span><strong>${purchase.withWaste}</strong></div>
+    <div class="stat" style="font-size:0.78rem; color:#888;"><span>${t('sumInclWaste', wastePct)}</span><span>${t('sumBeforeWaste', purchase.layoutPanels)}</span></div>
+    <div class="stat total"><span>${t('sumScrews')}</span><strong>${screwCount}</strong></div>
+    <div class="stat" style="font-size:0.78rem; color:#888;"><span>${t('sumScrewPacks')}</span><span>${costs.screwPacks}</span></div>
+    <div class="stat total"><span>${t('sumBattens')}</span><strong>${battenMeters.toFixed(2)} m</strong></div>
+    <div class="stat" style="font-size:0.78rem; color:#888;"><span>${t('sumBattensNote')}</span></div>
     ${so && so.crossFirst != null ? `
-    <div class="stat total"><span>First batten centerline</span><strong>${so.crossFirst} mm</strong></div>
-    <div class="stat" style="font-size:0.78rem; color:#888;"><span>from ${so.crossWall} wall · then 600 mm c/c</span></div>` : ''}
+    <div class="stat total"><span>${t('soBatten')}</span><strong>${so.crossFirst} mm</strong></div>
+    <div class="stat" style="font-size:0.78rem; color:#888;"><span>${t('soBattenNote', wallName(so.crossWall))}</span></div>` : ''}
     ${so && so.longFirst != null ? `
-    <div class="stat"><span>First panel end joint</span><strong>${so.longFirst} mm</strong></div>
-    <div class="stat" style="font-size:0.78rem; color:#888;"><span>from ${so.longWall} wall (even rows) · odd rows +600 mm</span></div>` : ''}
-    <div class="stat total"><span>Panel cost</span><strong>${fmtMoney(costs.panelCost)}</strong></div>
+    <div class="stat"><span>${t('soJoint')}</span><strong>${so.longFirst} mm</strong></div>
+    <div class="stat" style="font-size:0.78rem; color:#888;"><span>${t('soJointNote', wallName(so.longWall))}</span></div>` : ''}
+    <div class="stat total"><span>${t('costPanels')}</span><strong>${fmtMoney(costs.panelCost)}</strong></div>
     <div class="stat" style="font-size:0.78rem; color:#888;"><span>${purchase.withWaste} × ${fmtMoney(panelPrice)}</span></div>
-    <div class="stat"><span>Screw cost</span><strong>${fmtMoney(costs.screwCost)}</strong></div>
+    <div class="stat"><span>${t('costScrews')}</span><strong>${fmtMoney(costs.screwCost)}</strong></div>
     <div class="stat" style="font-size:0.78rem; color:#888;"><span>${costs.screwPacks} × ${fmtMoney(screwPackPrice)}</span></div>
-    <div class="stat"><span>Batten cost</span><strong>${fmtMoney(costs.battenCost)}</strong></div>
+    <div class="stat"><span>${t('costBattens')}</span><strong>${fmtMoney(costs.battenCost)}</strong></div>
     <div class="stat" style="font-size:0.78rem; color:#888;"><span>${battenMeters.toFixed(2)} m × ${fmtMoney(battenPrice)}</span></div>
-    <div class="stat total"><span><strong>Total</strong></span><strong>${fmtMoney(costs.totalCost)}</strong></div>
+    <div class="stat total"><span><strong>${t('costTotal')}</strong></span><strong>${fmtMoney(costs.totalCost)}</strong></div>
   `;
 }
 
@@ -1363,39 +1557,32 @@ function renderCutList(group, offBattenScrews, packedPanels) {
     <td>—</td>
     <td class="num">${fullCount}</td>
     <td class="num">600 × 1200</td>
-    <td><span class="badge full">full</span></td>
+    <td><span class="badge full">${t('type_full')}</span></td>
     <td>—</td>
   </tr>`;
   for (const g of cutGroups) {
-    const pairNote = g.piecesPerPanel >= 2
-      ? `${g.piecesPerPanel} per source panel`
-      : '1 per source panel';
     rows += `<tr class="${g.tooSmall ? 'warn' : ''}">
       <td><span class="badge">${g.letter}</span></td>
       <td class="num">${g.count}</td>
       <td class="num">${g.w} × ${g.h}</td>
-      <td><span class="badge ${g.type}">${g.type}</span></td>
-      <td>${pairNote}${g.tooSmall ? ` · <strong>cut &lt; 150 mm</strong>` : ''}</td>
+      <td><span class="badge ${g.type}">${t('type_' + g.type)}</span></td>
+      <td>${t('perPanel', g.piecesPerPanel)}${g.tooSmall ? ` · <strong>${t('cutSmallNote')}</strong>` : ''}</td>
     </tr>`;
   }
   let html = `
-    <h2>Cut List</h2>
+    <h2>${t('cutListTitle')}</h2>
     <table>
-      <thead><tr><th>ID</th><th>Qty</th><th>Size (mm)</th><th>Type</th><th>Notes</th></tr></thead>
+      <thead><tr><th>${t('thID')}</th><th>${t('thQty')}</th><th>${t('thSize')}</th><th>${t('thType')}</th><th>${t('thNotes')}</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   `;
   html += cutDiagramsHTML(packedPanels);
   const hasTiny = cutGroups.some(g => g.tooSmall);
   if (hasTiny) {
-    html += `<div class="warn-banner">
-      One or more cuts are smaller than 150 mm. These are awkward to install — consider shifting the anchor by 300 mm (e.g. nudge the room dimensions slightly) or rotating panel orientation to improve the layout.
-    </div>`;
+    html += `<div class="warn-banner">${t('warnTiny')}</div>`;
   }
   if (offBattenScrews > 0) {
-    html += `<div class="warn-banner">
-      ${offBattenScrews} screw${offBattenScrews === 1 ? ' has' : 's have'} no batten beneath (marked red in the drawing) — plan an extra batten or noggin at those spots.
-    </div>`;
+    html += `<div class="warn-banner">${offBattenScrews === 1 ? t('warnOffBatten1') : t('warnOffBattenN', offBattenScrews)}</div>`;
   }
   els.cutList.innerHTML = html;
 }
@@ -1408,8 +1595,8 @@ function renderAnchorStatus(extra) {
   if (!els.anchorStatus) return;
   const { dx, dy } = anchorOffset;
   let txt = (dx === 0 && dy === 0)
-    ? 'Anchor: centered'
-    : `Anchor offset: x ${fmtSigned(dx)} · y ${fmtSigned(dy)} mm`;
+    ? t('anchorCentered')
+    : t('anchorOffsetTxt', fmtSigned(dx), fmtSigned(dy));
   if (extra) txt += ` — ${extra}`;
   els.anchorStatus.textContent = txt;
 }
@@ -1433,7 +1620,7 @@ function runOptimize() {
 
   const best = optimizeLayout(roomPoly, naturalLongAxisX, OPTIMIZE_STEP, allowRotate);
   if (!betterLayout(best, current)) {
-    renderAnchorStatus('already optimal');
+    renderAnchorStatus(t('alreadyOptimal'));
     return;
   }
 
@@ -1444,10 +1631,10 @@ function runOptimize() {
   update();
 
   const parts = [];
-  if (best.tiny < current.tiny) parts.push(`cuts < 150 mm: ${current.tiny} → ${best.tiny}`);
-  if (best.panelsNeeded < current.panelsNeeded) parts.push(`panels: ${current.panelsNeeded} → ${best.panelsNeeded} (before waste)`);
-  if (best.cutCount < current.cutCount) parts.push(`cut pieces: ${current.cutCount} → ${best.cutCount}`);
-  renderAnchorStatus(parts.length ? `optimized · ${parts.join(' · ')}` : 'optimized');
+  if (best.tiny < current.tiny) parts.push(t('optTiny', current.tiny, best.tiny));
+  if (best.panelsNeeded < current.panelsNeeded) parts.push(t('optPanels', current.panelsNeeded, best.panelsNeeded));
+  if (best.cutCount < current.cutCount) parts.push(t('optCuts', current.cutCount, best.cutCount));
+  renderAnchorStatus(parts.length ? `${t('optimized')} · ${parts.join(' · ')}` : t('optimized'));
 }
 
 // Small inline-SVG cutting diagrams under the cut list: one 600×1200
@@ -1470,16 +1657,16 @@ function cutDiagramsHTML(packedPanels) {
       }
     }
     return `<div class="diagram">
-      <svg viewBox="-15 -15 630 1230" aria-label="Cutting diagram for source panel ${idx + 1}">
+      <svg viewBox="-15 -15 630 1230" aria-label="${t('diagPanel', idx + 1)}">
         <rect class="outline" x="0" y="0" width="600" height="1200"/>
         ${inner}
       </svg>
-      <span>Panel ${idx + 1}</span>
+      <span>${t('diagPanel', idx + 1)}</span>
     </div>`;
   }).join('');
   return `<div class="cut-diagrams">
-    <h2>Cutting Diagrams</h2>
-    <div class="diagrams-note">One rectangle per source panel (600 × 1200). Letters match the cut list; blank areas are offcuts.</div>
+    <h2>${t('diagTitle')}</h2>
+    <div class="diagrams-note">${t('diagNote')}</div>
     <div class="diagrams">${diagrams}</div>
   </div>`;
 }
@@ -1627,14 +1814,14 @@ function update() {
   // Status line under the polygon textarea
   if (polygonErrors.length || roomPoly.length < 3) {
     els.polygonStatus.className = 'polygon-status error';
-    els.polygonStatus.textContent = polygonErrors[0] || 'Polygon needs ≥ 3 vertices';
+    els.polygonStatus.textContent = polygonErrors[0] || t('statusFallback');
     return; // keep the last good drawing
   }
   const bb = polygonBBox(roomPoly);
   const m2 = polygonArea(roomPoly) / 1e6;
   els.polygonStatus.className = 'polygon-status ok';
   els.polygonStatus.textContent =
-    `${roomPoly.length} vertices · bbox ${Math.round(bb.w)}×${Math.round(bb.h)} mm · ${m2.toFixed(2)} m²`
+    t('statusOk', roomPoly.length, Math.round(bb.w), Math.round(bb.h), m2.toFixed(2))
     + (polygonNotes.length ? ` · ${polygonNotes.join(' · ')}` : '');
 
   const naturalLongAxisX = bb.w >= bb.h;
@@ -1688,14 +1875,13 @@ if (isBrowser) {
   });
   els.optimizeBtn.addEventListener('click', () => {
     const btn = els.optimizeBtn;
-    const prevText = btn.textContent;
     btn.disabled = true;
-    btn.textContent = 'Optimizing…';
+    btn.textContent = t('optimizing');
     setTimeout(() => {
       try { runOptimize(); }
       finally {
         btn.disabled = false;
-        btn.textContent = prevText;
+        btn.textContent = t('optimizeBtn');
       }
     }, 30);
   });
@@ -1718,11 +1904,17 @@ if (isBrowser) {
     saveState();
     try {
       await navigator.clipboard.writeText(location.href);
-      els.copyLink.textContent = 'Copied!';
+      els.copyLink.textContent = t('copied');
     } catch (e) {
-      els.copyLink.textContent = 'Copy failed';
+      els.copyLink.textContent = t('copyFailed');
     }
-    setTimeout(() => { els.copyLink.textContent = 'Copy link'; }, 1500);
+    setTimeout(() => { els.copyLink.textContent = t('copyLink'); }, 1500);
+  });
+  els.langToggle.addEventListener('click', () => {
+    lang = lang === 'da' ? 'en' : 'da';
+    localStorage.setItem('troldtekt-lang', lang);
+    applyLanguage();
+    update();
   });
   // Applying a pasted/back-navigated hash (our own replaceState writes
   // never fire hashchange, but compare anyway).
@@ -1961,7 +2153,7 @@ if (isBrowser) {
 function applyTheme(name) {
   theme = THEMES[name] || THEMES.light;
   document.body.classList.toggle('dark', name === 'dark');
-  els.themeToggle.textContent = name === 'dark' ? 'Light mode' : 'Dark mode';
+  els.themeToggle.textContent = name === 'dark' ? t('lightMode') : t('darkMode');
   els.themeToggle.setAttribute('aria-pressed', String(name === 'dark'));
 }
 function initTheme() {
@@ -1987,20 +2179,24 @@ if (isBrowser) {
 // rectangles.
 const TEMPLATES = [
   // Plain rectangle.
-  { name: 'Værelse',        polygon: [{x:0,y:0},{x:3000,y:0},{x:3000,y:4000},{x:0,y:4000}] },
+  { name: 'Værelse',      nameEn: 'Room',           polygon: [{x:0,y:0},{x:3000,y:0},{x:3000,y:4000},{x:0,y:4000}] },
   // Trapezoid — one slanted wall.
-  { name: 'Soveværelse',    polygon: [{x:0,y:0},{x:3500,y:0},{x:3000,y:4200},{x:0,y:4200}] },
+  { name: 'Soveværelse',  nameEn: 'Bedroom',        polygon: [{x:0,y:0},{x:3500,y:0},{x:3000,y:4200},{x:0,y:4200}] },
   // Rectangle with a chimney-pocket notch.
-  { name: 'Badeværelse',    polygon: [{x:0,y:0},{x:2500,y:0},{x:2500,y:3000},{x:1800,y:3000},{x:1800,y:2200},{x:1200,y:2200},{x:1200,y:3000},{x:0,y:3000}] },
+  { name: 'Badeværelse',  nameEn: 'Bathroom',       polygon: [{x:0,y:0},{x:2500,y:0},{x:2500,y:3000},{x:1800,y:3000},{x:1800,y:2200},{x:1200,y:2200},{x:1200,y:3000},{x:0,y:3000}] },
   // Pentagon — one cut corner.
-  { name: 'Entre',          polygon: [{x:0,y:0},{x:3000,y:0},{x:3000,y:3000},{x:2000,y:4000},{x:0,y:4000}] },
+  { name: 'Entre',        nameEn: 'Hallway',        polygon: [{x:0,y:0},{x:3000,y:0},{x:3000,y:3000},{x:2000,y:4000},{x:0,y:4000}] },
   // L-shape.
-  { name: 'Køkken/alrum',   polygon: [{x:0,y:0},{x:6000,y:0},{x:6000,y:3500},{x:3500,y:3500},{x:3500,y:4500},{x:0,y:4500}] },
+  { name: 'Køkken/alrum', nameEn: 'Kitchen/dining', polygon: [{x:0,y:0},{x:6000,y:0},{x:6000,y:3500},{x:3500,y:3500},{x:3500,y:4500},{x:0,y:4500}] },
   // Octagonal (rectangle with all four corners chamfered).
-  { name: 'Stue',           polygon: [{x:800,y:0},{x:4200,y:0},{x:5000,y:800},{x:5000,y:3700},{x:4200,y:4500},{x:800,y:4500},{x:0,y:3700},{x:0,y:800}] },
+  { name: 'Stue',         nameEn: 'Living room',    polygon: [{x:800,y:0},{x:4200,y:0},{x:5000,y:800},{x:5000,y:3700},{x:4200,y:4500},{x:800,y:4500},{x:0,y:3700},{x:0,y:800}] },
   // T-shape.
-  { name: 'Kontor',         polygon: [{x:0,y:0},{x:3500,y:0},{x:3500,y:1500},{x:2500,y:1500},{x:2500,y:3500},{x:1000,y:3500},{x:1000,y:1500},{x:0,y:1500}] },
+  { name: 'Kontor',       nameEn: 'Office',         polygon: [{x:0,y:0},{x:3500,y:0},{x:3500,y:1500},{x:2500,y:1500},{x:2500,y:3500},{x:1000,y:3500},{x:1000,y:1500},{x:0,y:1500}] },
 ];
+
+function templateName(tpl) {
+  return lang === 'da' ? tpl.name : (tpl.nameEn || tpl.name);
+}
 
 function templatePreviewHTML(template) {
   const bb = polygonBBox(template.polygon);
@@ -2015,20 +2211,23 @@ function templatePreviewHTML(template) {
 function renderTemplates() {
   const container = document.getElementById('templates');
   if (!container) return;
-  container.innerHTML = TEMPLATES.map((t, i) => {
-    const area = (polygonArea(t.polygon) / 1e6).toFixed(2);
-    return `<button class="template-card" type="button" data-template="${i}" title="${t.name} — ${area} m²">
-      <div class="template-preview">${templatePreviewHTML(t)}</div>
-      <span class="template-name">${t.name}</span>
+  container.innerHTML = TEMPLATES.map((tpl, i) => {
+    const area = (polygonArea(tpl.polygon) / 1e6).toFixed(2);
+    const name = templateName(tpl);
+    return `<button class="template-card" type="button" data-template="${i}" title="${name} — ${area} m²">
+      <div class="template-preview">${templatePreviewHTML(tpl)}</div>
+      <span class="template-name">${name}</span>
       <span class="template-area">${area} m²</span>
     </button>`;
   }).join('');
-  container.addEventListener('click', e => {
+  // onclick (not addEventListener) — applyLanguage() re-renders the
+  // gallery on language switch and must not stack duplicate listeners.
+  container.onclick = e => {
     const card = e.target.closest('.template-card');
     if (!card) return;
     const idx = parseInt(card.dataset.template, 10);
     applyTemplate(TEMPLATES[idx], card);
-  });
+  };
 }
 
 function applyTemplate(template, card) {
@@ -2043,8 +2242,22 @@ function applyTemplate(template, card) {
   update();
 }
 
-if (isBrowser) {
+// Resolve every data-i18n / data-i18n-title node, refresh the labels
+// that are set programmatically, and re-render the template gallery.
+// Called once at startup and on every language switch.
+function applyLanguage() {
+  document.documentElement.lang = lang;
+  document.title = t('appTitle');
+  document.querySelectorAll('[data-i18n]').forEach(n => { n.textContent = t(n.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-title]').forEach(n => { n.title = t(n.dataset.i18nTitle); });
+  els.langToggle.textContent = lang === 'da' ? 'English' : 'Dansk';
+  els.copyLink.textContent = t('copyLink');
+  applyTheme(document.body.classList.contains('dark') ? 'dark' : 'light');
   renderTemplates();
+}
+
+if (isBrowser) {
+  applyLanguage();
   initState(); // URL hash wins over localStorage, both over HTML defaults
   update();
 }
@@ -2056,13 +2269,12 @@ async function exportPDF() {
   // offline, blocked, or tampered — fail with a clear message instead
   // of a TypeError.
   if (!window.jspdf || !window.jspdf.jsPDF || typeof window.svg2pdf === 'undefined') {
-    alert('PDF export is unavailable: the jsPDF/svg2pdf libraries could not be loaded from their CDNs. Check your connection and reload the page.');
+    alert(t('alertNoLibs'));
     return;
   }
   const btn = els.exportBtn;
-  const prevText = btn.textContent;
   btn.disabled = true;
-  btn.textContent = 'Generating…';
+  btn.textContent = t('generating');
   // PDFs are printed on white paper — re-render the SVG with the light
   // palette before snapshotting so the export never comes out dark.
   const wasDark = document.body.classList.contains('dark');
@@ -2101,11 +2313,11 @@ async function exportPDF() {
     const scaleDenom = Math.round(1 / factor);
 
     pdf.setFont('helvetica', 'bold'); pdf.setFontSize(14);
-    pdf.text('Troldtekt Panel Calculator', margin, 16);
+    pdf.text(t('appTitle'), margin, 16);
     pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10);
-    pdf.text(`Room (bbox): ${W} × ${L} mm`, margin, 23);
-    pdf.text(`Scale 1:${scaleDenom}`, pageW - margin, 23, { align: 'right' });
-    pdf.text(`Halv forbandt · centered`, margin, 28);
+    pdf.text(t('pdfRoom', W, L), margin, 23);
+    pdf.text(t('pdfScale', scaleDenom), pageW - margin, 23, { align: 'right' });
+    pdf.text(t('pdfMode'), margin, 28);
     pdf.text(new Date().toLocaleDateString(), pageW - margin, 28, { align: 'right' });
 
     const drawX = margin + (usableW - drawW) / 2;
@@ -2116,44 +2328,45 @@ async function exportPDF() {
 
     pdf.addPage();
     pdf.setFont('helvetica', 'bold'); pdf.setFontSize(14);
-    pdf.text('Materials & Cut List', margin, 16);
+    pdf.text(t('pdfPage2'), margin, 16);
     pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10);
-    pdf.text(`Room (bbox): ${W} × ${L} mm`, margin, 23);
+    pdf.text(t('pdfRoom', W, L), margin, 23);
 
     let y = 34;
     pdf.setFont('helvetica', 'bold'); pdf.setFontSize(11);
-    pdf.text('Summary', margin, y); y += 6;
+    pdf.text(t('sumTitle'), margin, y); y += 6;
     pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10);
     const m2 = polygonArea(roomPoly) / 1e6;
+    const wallName = w => w === 'left' ? t('wallLeft') : t('wallTop');
     const lines = [
-      `Ceiling area: ${m2.toFixed(2)} m²`,
-      `Pieces in layout: ${group.totalPieces}`,
-      `Full panels (uncut): ${group.fullCount}`,
-      `Cut pieces: ${group.cutCount}  (cut from ${purchase.cutPanels} source panels, complementary cuts paired)`,
-      `Panels to purchase (incl. ${waste}% waste): ${purchase.withWaste}`,
-      `   – before waste: ${purchase.layoutPanels}`,
-      `Screws needed: ${screwCount}  (${costs.screwPacks} pack${costs.screwPacks === 1 ? '' : 's'} of 100)`,
-      `Battens needed: ${battenMeters.toFixed(2)} m  (edges along long axis + interior @ 600 mm)`,
+      t('pdfArea', m2.toFixed(2)),
+      t('pdfPieces', group.totalPieces),
+      t('pdfFull', group.fullCount),
+      t('pdfCutPieces', group.cutCount, purchase.cutPanels),
+      t('pdfPurchase', waste, purchase.withWaste),
+      t('pdfBeforeWaste', purchase.layoutPanels),
+      t('pdfScrews', screwCount, costs.screwPacks),
+      t('pdfBattens', battenMeters.toFixed(2)),
     ];
     if (offBatten > 0) {
-      lines.push(`NOTE: ${offBatten} screw${offBatten === 1 ? '' : 's'} without a batten beneath — add battens/noggins there.`);
+      lines.push(t('pdfOffBatten', offBatten));
     }
     if (settingOut && settingOut.crossFirst != null) {
-      lines.push(`Setting out: first batten centerline ${settingOut.crossFirst} mm from ${settingOut.crossWall} wall, then 600 mm c/c`);
+      lines.push(t('pdfSOBatten', settingOut.crossFirst, wallName(settingOut.crossWall)));
     }
     if (settingOut && settingOut.longFirst != null) {
-      lines.push(`   first panel end joint ${settingOut.longFirst} mm from ${settingOut.longWall} wall (even rows), 1200 mm c/c, odd rows +600 mm`);
+      lines.push(t('pdfSOJoint', settingOut.longFirst, wallName(settingOut.longWall)));
     }
     for (const line of lines) { pdf.text(line, margin, y); y += 5.2; }
     y += 6;
 
     pdf.setFont('helvetica', 'bold'); pdf.setFontSize(11);
-    pdf.text('Cost', margin, y); y += 6;
+    pdf.text(t('pdfCost'), margin, y); y += 6;
     pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10);
     const costLines = [
-      [`Panels   (${purchase.withWaste} × ${fmtMoney(panelPrice)})`,           fmtMoney(costs.panelCost)],
-      [`Screws   (${costs.screwPacks} × ${fmtMoney(screwPackPrice)})`,         fmtMoney(costs.screwCost)],
-      [`Battens  (${battenMeters.toFixed(2)} m × ${fmtMoney(battenPrice)})`,   fmtMoney(costs.battenCost)],
+      [t('pdfCostPanels', purchase.withWaste, fmtMoney(panelPrice)),           fmtMoney(costs.panelCost)],
+      [t('pdfCostScrews', costs.screwPacks, fmtMoney(screwPackPrice)),         fmtMoney(costs.screwCost)],
+      [t('pdfCostBattens', battenMeters.toFixed(2), fmtMoney(battenPrice)),    fmtMoney(costs.battenCost)],
     ];
     for (const [lbl, val] of costLines) {
       pdf.text(lbl, margin, y);
@@ -2165,7 +2378,7 @@ async function exportPDF() {
     pdf.line(margin, y - 1, pageW - margin, y - 1);
     y += 1;
     pdf.setFont('helvetica', 'bold');
-    pdf.text('Total', margin, y);
+    pdf.text(t('costTotal'), margin, y);
     pdf.text(fmtMoney(costs.totalCost), pageW - margin, y, { align: 'right' });
     pdf.setFont('helvetica', 'normal');
     y += 8;
@@ -2177,7 +2390,7 @@ async function exportPDF() {
     pdf.setDrawColor(0);
 
     pdf.setFont('helvetica', 'bold'); pdf.setFontSize(11);
-    pdf.text('Cut list', margin, y); y += 4;
+    pdf.text(t('pdfCutList'), margin, y); y += 4;
 
     const colX = { id: margin + 2, qty: margin + 14, size: margin + 32, type: margin + 68, notes: margin + 96 };
     const rowH = 5.5;
@@ -2189,11 +2402,11 @@ async function exportPDF() {
     pdf.setTextColor(85, 85, 85);
     pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8);
     const headerBaseline = y + rowH - 1.8;
-    pdf.text('ID',        colX.id,    headerBaseline);
-    pdf.text('QTY',       colX.qty,   headerBaseline);
-    pdf.text('SIZE (MM)', colX.size,  headerBaseline);
-    pdf.text('TYPE',      colX.type,  headerBaseline);
-    pdf.text('NOTES',     colX.notes, headerBaseline);
+    pdf.text(t('thID').toUpperCase(),    colX.id,    headerBaseline);
+    pdf.text(t('thQty').toUpperCase(),   colX.qty,   headerBaseline);
+    pdf.text(t('thSize').toUpperCase(),  colX.size,  headerBaseline);
+    pdf.text(t('thType').toUpperCase(),  colX.type,  headerBaseline);
+    pdf.text(t('thNotes').toUpperCase(), colX.notes, headerBaseline);
     y += rowH;
 
     // Table outline + header underline
@@ -2218,19 +2431,19 @@ async function exportPDF() {
       if (opts.warn) pdf.setTextColor(26, 26, 26);
     };
 
-    drawRow(['—', String(group.fullCount), '600 × 1200', 'full', '—']);
+    drawRow(['—', String(group.fullCount), '600 × 1200', t('type_full'), '—']);
     for (const g of group.cutGroups) {
-      const note = `${g.piecesPerPanel} per source panel` + (g.tooSmall ? '  (< 150 mm)' : '');
-      drawRow([g.letter, String(g.count), `${g.w} × ${g.h}`, g.type, note], { warn: g.tooSmall });
+      const note = t('perPanel', g.piecesPerPanel) + (g.tooSmall ? `  (${t('cutSmallNote')})` : '');
+      drawRow([g.letter, String(g.count), `${g.w} × ${g.h}`, t('type_' + g.type), note], { warn: g.tooSmall });
     }
 
     if (purchase.packedPanels && purchase.packedPanels.length) {
       pdf.addPage();
       pdf.setFont('helvetica', 'bold'); pdf.setFontSize(14);
-      pdf.text('Cutting Diagrams', margin, 16);
+      pdf.text(t('diagTitle'), margin, 16);
       pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9);
       pdf.setTextColor(85, 85, 85);
-      pdf.text('One rectangle per 600 × 1200 source panel. Letters match the cut list; blank areas are offcuts.', margin, 22);
+      pdf.text(t('pdfDiagNote'), margin, 22);
       pdf.setTextColor(26, 26, 26);
       drawCutDiagrams(pdf, purchase.packedPanels, { margin, pageW, pageH, startY: 30 });
     }
@@ -2238,15 +2451,16 @@ async function exportPDF() {
     pdf.save(`troldtekt-${W}x${L}.pdf`);
   } catch (err) {
     console.error(err);
-    alert('PDF export failed: ' + (err.message || err));
+    alert(t('alertExportFailed') + (err.message || err));
   } finally {
     btn.disabled = false;
-    btn.textContent = prevText;
+    btn.textContent = t('exportBtn');
     if (wasDark) { theme = THEMES.dark; update(); }
   }
 }
 
 const __api = {
+  STRINGS, t,
   parsePolygon, polygonBBox, polygonArea, polygonSignedArea, polygonCentroid,
   pointInPolygon, clipPolygonByRect, findSelfIntersection, segmentsIntersect,
   generatePanels, generateBattens, totalBattenLength, computeSettingOut,
