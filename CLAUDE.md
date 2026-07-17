@@ -60,6 +60,24 @@ All logic lives in `app.js`.
    SVG groups.
 8. PDF export clones the live SVG, stages it offscreen so `getComputedStyle`
    works for svg2pdf, then renders two A4 pages (drawing + cut list).
+   The `.layer-handles` group is removed from the clone (screen-only).
+9. **State & share URLs** — `collectState`/`applyState` round-trip all
+   inputs plus rotation, anchor offset, and hidden layers.
+   `encodeStateHash`/`decodeStateHash` (pure, tested) map that state to
+   a compact URL fragment (`#p=0,0;3600,0;…&w=10&rot=1&ox=150&hide=cs`).
+   `update()` calls `saveState()` → localStorage + `history.replaceState`.
+   On load: URL hash > localStorage > HTML defaults. `hashchange`
+   applies pasted hashes (our own writes are compared away).
+10. **Vertex editing** — `renderSVG` draws `data-vertex` circles on
+    corners and `data-edge` circles on edge midpoints (`.layer-handles`).
+    Pointer events live on the SVG root (elements are re-created every
+    frame; capture survives). Drags work on a copy of
+    `lastState.roomPoly` (already winding-normalized, so indices stay
+    stable), write the textarea, and rAF-throttle `update()`.
+    `snapVertex` (pure, tested) rounds to a 10 mm grid and snaps to
+    neighbour axes within 60 mm. Edge-midpoint drag inserts a vertex;
+    double-click removes one (min 3 stays). Any shape edit resets
+    `anchorOffset`.
 
 ## Conventions
 

@@ -39,6 +39,7 @@ header h1 .muted { color: #888; font-weight: 400; margin-left: 0.5rem; }
 }
 .theme-toggle:hover { border-color: #1a1a1a; color: #1a1a1a; }
 .theme-toggle:focus-visible { outline: 2px solid #f97316; outline-offset: 2px; }
+.header-actions { display: flex; gap: 0.5rem; flex-shrink: 0; }
 
 .templates {
   background: #fff;
@@ -206,6 +207,12 @@ svg.no-labels  .layer-labels  { display: none; }
 svg.no-cuts    .layer-cuts    { display: none; }
 svg.no-screws  .layer-screws  { display: none; }
 svg.no-battens .layer-battens { display: none; }
+svg.no-handles .layer-handles { display: none; }
+
+/* Vertex editing: keep touch drags on the drawing, not the page */
+svg#drawing { touch-action: none; }
+.layer-handles [data-vertex] { cursor: grab; }
+.layer-handles [data-edge]   { cursor: copy; }
 
 .cut-list { margin-top: 1.25rem; }
 .cut-list h2 {

@@ -14,6 +14,16 @@ No build step. Hostable as static files on GitHub Pages.
   validated: self-intersecting or zero-area polygons are rejected with
   a message, duplicate/closing vertices are dropped, and
   counter-clockwise input is automatically reversed to clockwise.
+- **Interactive editing in the drawing** — drag a corner handle to move
+  it (positions snap to a 10 mm grid, and to a neighbour's x/y within
+  60 mm so walls stay straight), drag an edge midpoint to add a corner,
+  double-click a corner to remove it. The textarea stays the source of
+  truth and updates live.
+- **Persistence and share links** — the full state (room, prices,
+  toggles, rotation, anchor offset) is saved to `localStorage` and
+  mirrored into the URL hash on every change, so a layout survives
+  reloads and can be bookmarked or shared. "Copy link" in the header
+  copies the URL. A pasted link wins over the locally saved state.
 - **Centered halv forbandt tiling** — the anchor panel is placed on
   the bounding-box center (or polygon centroid if the bbox center is
   outside the polygon, e.g. for L-shapes). Odd rows offset by 600 mm

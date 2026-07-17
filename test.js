@@ -243,6 +243,48 @@ screwChecks('L-shape', LSHAPE);
   screwChecks('trapezoid with offset', TRAPEZOID, 95, { dx: 150, dy: -50 });
 }
 
+// ---- state hash round-trip ----
+{
+  const state = {
+    polygonText: '0, 0\n3600, 0\n3600, 4800\n0, 4800',
+    waste: '12', panelPrice: '129', screwPackPrice: '170',
+    battenPrice: '10.5', battenWidth: '95',
+    rotated: true, offset: { dx: 150, dy: -100 }, hide: 'cs',
+  };
+  const hash = T.encodeStateHash(state);
+  check(hash.startsWith('p=0,0;3600,0;3600,4800;0,4800'), 'hash: polygon encoded compactly');
+  check(!/[%#?\s]/.test(hash), 'hash: no characters needing escaping');
+  const back = T.decodeStateHash('#' + hash);
+  check(back.polygonText === state.polygonText, 'hash: polygon round-trips');
+  check(back.waste === 12 && back.panelPrice === 129 && back.battenPrice === 10.5
+        && back.screwPackPrice === 170 && back.battenWidth === 95, 'hash: numbers round-trip');
+  check(back.rotated === true, 'hash: rotation round-trips');
+  check(back.offset.dx === 150 && back.offset.dy === -100, 'hash: anchor offset round-trips');
+  check(back.hide === 'cs', 'hash: hidden layers round-trip');
+}
+{
+  // Defaults are omitted from the hash and absent on decode.
+  const hash = T.encodeStateHash({ polygonText: '0, 0\n1200, 0\n1200, 600\n0, 600', waste: '10' });
+  check(!hash.includes('rot') && !hash.includes('ox') && !hash.includes('hide'),
+        'hash: default rotation/offset/layers omitted');
+  const back = T.decodeStateHash(hash); // also works without the leading #
+  check(back.rotated === undefined && back.offset === undefined, 'hash: omitted fields stay undefined');
+  check(T.decodeStateHash('') === null, 'hash: empty input → null');
+  check(T.decodeStateHash('#w=10') === null, 'hash: no polygon → null');
+  check(T.encodeStateHash({ polygonText: 'garbage' }) === '', 'hash: invalid polygon → empty string');
+}
+
+// ---- vertex snapping ----
+{
+  const poly = [{ x: 0, y: 0 }, { x: 3600, y: 0 }, { x: 3600, y: 4800 }, { x: 0, y: 4800 }];
+  const s1 = T.snapVertex(poly, 1, 3577, 42);
+  check(s1.x === 3600 && s1.y === 0, 'snapVertex: snaps to neighbour axes within 60 mm');
+  const s2 = T.snapVertex(poly, 1, 3212, 2004);
+  check(s2.x === 3210 && s2.y === 2000, 'snapVertex: rounds to 10 mm grid away from neighbours');
+  const s3 = T.snapVertex(poly, 1, -500, 31000);
+  check(s3.x === 0 && s3.y === 30000, 'snapVertex: clamps to the valid coordinate range');
+}
+
 // ---- totalScrewCount fallback (no battens assigned) ----
 {
   const panels = T.generatePanels(RECT);

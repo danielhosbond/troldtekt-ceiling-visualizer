@@ -27,6 +27,8 @@ const els = !isBrowser ? null : {
   showCuts: document.getElementById('show-cuts'),
   showScrews: document.getElementById('show-screws'),
   showBattens: document.getElementById('show-battens'),
+  showHandles: document.getElementById('show-handles'),
+  copyLink: document.getElementById('copy-link'),
   svg:      document.getElementById('drawing'),
   summary:  document.getElementById('summary'),
   cutList:  document.getElementById('cut-list'),
@@ -707,6 +709,88 @@ function offBattenScrewCount(panels) {
     n + (p.screws ? p.screws.filter(s => s.offBatten).length : 0), 0);
 }
 
+// -------- State persistence & share URLs --------
+
+// The full app state (room, prices, toggles, layout tweaks) is saved
+// to localStorage on every update and mirrored into the URL hash via
+// history.replaceState, so the current layout is always bookmarkable
+// and shareable. Values are plain numbers and , ; . - separators, all
+// legal in a URL fragment, so the hash stays readable.
+//   #p=0,0;3600,0;3600,4800;0,4800&w=10&pp=129&sp=170&bp=10&bw=95
+//    &rot=1&ox=150&oy=-100&hide=cs
+const STATE_KEY = 'troldtekt-state';
+
+// letter used in the `hide=` hash field → els key of the checkbox
+const LAYER_KEYS = [
+  ['d', 'showDims'], ['l', 'showLab'], ['c', 'showCuts'],
+  ['s', 'showScrews'], ['b', 'showBattens'], ['h', 'showHandles'],
+];
+
+function encodeStateHash(s) {
+  const { poly, errors } = parsePolygon(s.polygonText || '');
+  if (errors.length) return '';
+  const parts = [`p=${poly.map(pt => `${pt.x},${pt.y}`).join(';')}`];
+  const num = (key, v) => {
+    const n = parseFloat(v);
+    if (isFinite(n)) parts.push(`${key}=${n}`);
+  };
+  num('w',  s.waste);
+  num('pp', s.panelPrice);
+  num('sp', s.screwPackPrice);
+  num('bp', s.battenPrice);
+  num('bw', s.battenWidth);
+  if (s.rotated) parts.push('rot=1');
+  if (s.offset && (s.offset.dx || s.offset.dy)) {
+    parts.push(`ox=${s.offset.dx || 0}`, `oy=${s.offset.dy || 0}`);
+  }
+  if (s.hide) parts.push(`hide=${s.hide}`);
+  return parts.join('&');
+}
+
+function decodeStateHash(hash) {
+  const raw = (hash || '').replace(/^#/, '');
+  if (!raw.includes('p=')) return null;
+  const s = {};
+  let ox, oy;
+  for (const part of raw.split('&')) {
+    const i = part.indexOf('=');
+    if (i < 0) continue;
+    const k = part.slice(0, i), v = part.slice(i + 1);
+    if      (k === 'p')    s.polygonText = v.split(';').map(pair => pair.replace(',', ', ')).join('\n');
+    else if (k === 'w')    s.waste = parseFloat(v);
+    else if (k === 'pp')   s.panelPrice = parseFloat(v);
+    else if (k === 'sp')   s.screwPackPrice = parseFloat(v);
+    else if (k === 'bp')   s.battenPrice = parseFloat(v);
+    else if (k === 'bw')   s.battenWidth = parseFloat(v);
+    else if (k === 'rot')  s.rotated = v === '1';
+    else if (k === 'ox')   ox = parseFloat(v);
+    else if (k === 'oy')   oy = parseFloat(v);
+    else if (k === 'hide') s.hide = v;
+  }
+  if (!s.polygonText) return null;
+  if (isFinite(ox) || isFinite(oy)) s.offset = { dx: ox || 0, dy: oy || 0 };
+  return s;
+}
+
+// -------- Interactive polygon editing (pure part) --------
+
+const VERTEX_SNAP_GRID = 10; // mm — dragged positions round to this
+const VERTEX_SNAP_AXIS = 60; // mm — snap to a neighbour's x/y so walls stay straight
+
+function snapVertex(poly, index, x, y) {
+  x = Math.round(x / VERTEX_SNAP_GRID) * VERTEX_SNAP_GRID;
+  y = Math.round(y / VERTEX_SNAP_GRID) * VERTEX_SNAP_GRID;
+  const n = poly.length;
+  for (const q of [poly[(index + n - 1) % n], poly[(index + 1) % n]]) {
+    if (Math.abs(x - q.x) <= VERTEX_SNAP_AXIS) x = q.x;
+    if (Math.abs(y - q.y) <= VERTEX_SNAP_AXIS) y = q.y;
+  }
+  return {
+    x: Math.max(0, Math.min(30000, x)),
+    y: Math.max(0, Math.min(30000, y)),
+  };
+}
+
 // -------- SVG renderer --------
 
 // SVG presentation attributes are applied directly (not via stylesheet)
@@ -729,6 +813,8 @@ const THEMES = {
     offsetTick:  { stroke: '#1a1a1a', 'stroke-width': 1.5, fill: 'none' },
     offsetLabel: { 'font-family': 'sans-serif', 'font-size': 38, 'font-weight': 500, fill: '#1a1a1a' },
     batten:      { fill: '#c69f6c', 'fill-opacity': 0.45, stroke: '#8a5a2b', 'stroke-width': 1, 'stroke-opacity': 0.85 },
+    handle:      { fill: '#ffffff', stroke: '#1a1a1a', 'stroke-width': 3 },
+    handleMid:   { fill: '#ffffff', stroke: '#999', 'stroke-width': 2, opacity: 0.85 },
     roomEdgeLabel: '#1a1a1a',
     cutEdgeLabel:  '#92400e',
     battenLabel:   '#8a5a2b',
@@ -748,6 +834,8 @@ const THEMES = {
     offsetTick:  { stroke: '#d4d4d4', 'stroke-width': 1.5, fill: 'none' },
     offsetLabel: { 'font-family': 'sans-serif', 'font-size': 38, 'font-weight': 500, fill: '#e6e6e6' },
     batten:      { fill: '#7a4a18', 'fill-opacity': 0.55, stroke: '#fb923c', 'stroke-width': 1, 'stroke-opacity': 0.9 },
+    handle:      { fill: '#1f1f1f', stroke: '#fb923c', 'stroke-width': 3 },
+    handleMid:   { fill: '#1f1f1f', stroke: '#7c4a18', 'stroke-width': 2, opacity: 0.9 },
     roomEdgeLabel: '#f5f5f5',
     cutEdgeLabel:  '#fdba74',
     battenLabel:   '#fb923c',
@@ -889,6 +977,27 @@ function renderSVG(roomPoly, panels, battens, battenWidth, longAxisX, offset) {
 
   // Room border (polygon, on top so cut edges don't bleed past it)
   el(svg, 'polygon', { points: roomPts, ...theme.roomBorder });
+
+  // Edit handles (topmost): drag a corner to move it, drag an edge
+  // midpoint to add a corner, double-click a corner to remove it.
+  // Stripped from PDF export.
+  const gHandles = el(svg, 'g', { class: 'layer-handles' });
+  const handleR = Math.max(50, Math.min(W, L) * 0.03);
+  for (let i = 0; i < roomPoly.length; i++) {
+    const a = roomPoly[i], b = roomPoly[(i + 1) % roomPoly.length];
+    const mid = el(gHandles, 'circle', {
+      cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, r: handleR * 0.55,
+      'data-edge': i, ...theme.handleMid,
+    });
+    el(mid, 'title', {}, 'Drag to add a corner');
+  }
+  for (let i = 0; i < roomPoly.length; i++) {
+    const c = el(gHandles, 'circle', {
+      cx: roomPoly[i].x, cy: roomPoly[i].y, r: handleR,
+      'data-vertex': i, ...theme.handle,
+    });
+    el(c, 'title', {}, 'Drag to move corner · double-click to remove');
+  }
 }
 
 // Label each edge of a polygon with its length. Used for the room
@@ -1143,6 +1252,65 @@ function updateLayerClasses() {
   els.svg.classList.toggle('no-cuts',    !els.showCuts.checked);
   els.svg.classList.toggle('no-screws',  !els.showScrews.checked);
   els.svg.classList.toggle('no-battens', !els.showBattens.checked);
+  els.svg.classList.toggle('no-handles', !els.showHandles.checked);
+}
+
+function collectState() {
+  return {
+    polygonText: els.polygon.value,
+    waste: els.waste.value,
+    panelPrice: els.panelPrice.value,
+    screwPackPrice: els.screwPackPrice.value,
+    battenPrice: els.battenPrice.value,
+    battenWidth: els.battenWidth.value,
+    rotated: panelRotated,
+    offset: anchorOffset,
+    hide: LAYER_KEYS.filter(([, id]) => !els[id].checked).map(([k]) => k).join(''),
+  };
+}
+
+function applyState(s) {
+  if (s.polygonText !== undefined) els.polygon.value = s.polygonText;
+  const setNum = (elKey, v) => { if (isFinite(parseFloat(v))) els[elKey].value = v; };
+  setNum('waste', s.waste);
+  setNum('panelPrice', s.panelPrice);
+  setNum('screwPackPrice', s.screwPackPrice);
+  setNum('battenPrice', s.battenPrice);
+  setNum('battenWidth', s.battenWidth);
+  if (s.rotated !== undefined) {
+    panelRotated = !!s.rotated;
+    localStorage.setItem('troldtekt-rotated', String(panelRotated));
+  }
+  anchorOffset = s.offset
+    ? { dx: parseFloat(s.offset.dx) || 0, dy: parseFloat(s.offset.dy) || 0 }
+    : { dx: 0, dy: 0 };
+  if (s.hide !== undefined) {
+    for (const [k, id] of LAYER_KEYS) els[id].checked = !s.hide.includes(k);
+  }
+}
+
+let lastWrittenHash = '';
+function saveState() {
+  const s = collectState();
+  try { localStorage.setItem(STATE_KEY, JSON.stringify(s)); } catch (e) { /* private mode */ }
+  const hash = encodeStateHash(s);
+  if (hash && hash !== lastWrittenHash) {
+    lastWrittenHash = hash;
+    try { history.replaceState(null, '', '#' + hash); } catch (e) { /* file:// quirks */ }
+  }
+}
+
+function initState() {
+  const fromHash = decodeStateHash(location.hash);
+  if (fromHash) {
+    applyState(fromHash);
+    lastWrittenHash = location.hash.replace(/^#/, '');
+    return;
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem(STATE_KEY) || 'null');
+    if (saved) applyState(saved);
+  } catch (e) { /* corrupt state — fall back to defaults */ }
 }
 
 // -------- Main update --------
@@ -1215,6 +1383,7 @@ function update() {
   renderAnchorStatus();
   updateLayerClasses();
   lastState = { roomPoly, waste, panels, battens, battenMeters, battenWidth, group, purchase, screwCount, offBatten, costs, panelPrice, screwPackPrice, battenPrice };
+  saveState();
 }
 
 if (isBrowser) {
@@ -1224,7 +1393,8 @@ if (isBrowser) {
     update();
   });
   [els.waste, els.panelPrice, els.screwPackPrice, els.battenPrice, els.battenWidth].forEach(i => i.addEventListener('input', update));
-  [els.showDims, els.showLab, els.showCuts, els.showScrews, els.showBattens].forEach(c => c.addEventListener('change', updateLayerClasses));
+  [els.showDims, els.showLab, els.showCuts, els.showScrews, els.showBattens, els.showHandles].forEach(c =>
+    c.addEventListener('change', () => { updateLayerClasses(); saveState(); }));
   els.exportBtn.addEventListener('click', exportPDF);
   els.rotateBtn.addEventListener('click', () => {
     panelRotated = !panelRotated;
@@ -1247,6 +1417,104 @@ if (isBrowser) {
   });
   els.recenterBtn.addEventListener('click', () => {
     anchorOffset = { dx: 0, dy: 0 };
+    update();
+  });
+  els.copyLink.addEventListener('click', async () => {
+    saveState();
+    try {
+      await navigator.clipboard.writeText(location.href);
+      els.copyLink.textContent = 'Copied!';
+    } catch (e) {
+      els.copyLink.textContent = 'Copy failed';
+    }
+    setTimeout(() => { els.copyLink.textContent = 'Copy link'; }, 1500);
+  });
+  // Applying a pasted/back-navigated hash (our own replaceState writes
+  // never fire hashchange, but compare anyway).
+  window.addEventListener('hashchange', () => {
+    if (location.hash.replace(/^#/, '') === lastWrittenHash) return;
+    const s = decodeStateHash(location.hash);
+    if (!s) return;
+    applyState(s);
+    update();
+  });
+
+  // ---- Vertex editing on the SVG ----
+  // pointerdown on a handle starts a drag (capture goes to the SVG root
+  // because update() re-creates the handle elements every frame);
+  // pointerdown on an edge midpoint inserts a vertex and drags it.
+  // The textarea stays the source of truth: every move writes it and
+  // re-renders via rAF-throttled update().
+  let vertexDrag = null; // { poly, index }
+  let dragFrame = 0;
+
+  function svgEventPoint(evt) {
+    const ctm = els.svg.getScreenCTM();
+    if (!ctm) return null;
+    const pt = els.svg.createSVGPoint();
+    pt.x = evt.clientX;
+    pt.y = evt.clientY;
+    return pt.matrixTransform(ctm.inverse());
+  }
+
+  function writePolyToTextarea(poly) {
+    els.polygon.value = poly.map(p => `${p.x}, ${p.y}`).join('\n');
+  }
+
+  els.svg.addEventListener('pointerdown', e => {
+    const t = e.target;
+    const isVertex = t.dataset && t.dataset.vertex !== undefined;
+    const isEdge   = t.dataset && t.dataset.edge   !== undefined;
+    if ((!isVertex && !isEdge) || !lastState) return;
+    e.preventDefault();
+    // Work on the polygon that produced the current rendering — it is
+    // already normalized, so handle indices match and parsePolygon
+    // won't reverse it mid-drag.
+    const poly = lastState.roomPoly.map(p => ({ x: p.x, y: p.y }));
+    let index;
+    if (isVertex) {
+      index = +t.dataset.vertex;
+    } else {
+      const i = +t.dataset.edge;
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      index = i + 1;
+      poly.splice(index, 0, { x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2) });
+    }
+    vertexDrag = { poly, index };
+    anchorOffset = { dx: 0, dy: 0 }; // the shape is changing
+    try { els.svg.setPointerCapture(e.pointerId); } catch (err) { /* synthetic events */ }
+    if (isEdge) {
+      writePolyToTextarea(poly);
+      update();
+    }
+  });
+
+  els.svg.addEventListener('pointermove', e => {
+    if (!vertexDrag) return;
+    const p = svgEventPoint(e);
+    if (!p) return;
+    vertexDrag.poly[vertexDrag.index] = snapVertex(vertexDrag.poly, vertexDrag.index, p.x, p.y);
+    writePolyToTextarea(vertexDrag.poly);
+    if (!dragFrame) dragFrame = requestAnimationFrame(() => { dragFrame = 0; update(); });
+  });
+
+  const endDrag = () => {
+    if (!vertexDrag) return;
+    vertexDrag = null;
+    if (dragFrame) { cancelAnimationFrame(dragFrame); dragFrame = 0; }
+    update();
+  };
+  els.svg.addEventListener('pointerup', endDrag);
+  els.svg.addEventListener('pointercancel', endDrag);
+
+  els.svg.addEventListener('dblclick', e => {
+    const t = e.target;
+    if (!t.dataset || t.dataset.vertex === undefined || !lastState) return;
+    const poly = lastState.roomPoly.map(p => ({ x: p.x, y: p.y }));
+    if (poly.length <= 3) return;
+    poly.splice(+t.dataset.vertex, 1);
+    anchorOffset = { dx: 0, dy: 0 };
+    writePolyToTextarea(poly);
     update();
   });
 }
@@ -1338,6 +1606,7 @@ function applyTemplate(template, card) {
 
 if (isBrowser) {
   renderTemplates();
+  initState(); // URL hash wins over localStorage, both over HTML defaults
   update();
 }
 
@@ -1362,6 +1631,8 @@ async function exportPDF() {
 
     const clone = els.svg.cloneNode(true);
     clone.classList.remove('no-dims', 'no-labels', 'no-cuts', 'no-screws', 'no-battens');
+    const handleLayer = clone.querySelector('.layer-handles');
+    if (handleLayer) handleLayer.remove(); // edit handles are screen-only
 
     const stage = document.createElement('div');
     stage.style.cssText = 'position:fixed;left:-10000px;top:0;width:1200px;height:1600px;';
@@ -1514,6 +1785,7 @@ const __api = {
   generatePanels, generateBattens, totalBattenLength,
   groupPanels, piecesPerPanel, estimatePurchase, packCutPieces,
   scoreLayout, optimizeLayout, betterLayout,
+  encodeStateHash, decodeStateHash, snapVertex,
   placeScrews, screwOnBatten, totalScrewCount, offBattenScrewCount,
 };
 if (isBrowser) window.__troldtekt = { ...__api, runOptimize };

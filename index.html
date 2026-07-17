@@ -9,7 +9,10 @@
 <body>
 <header>
   <h1>Troldtekt Panel Calculator<span class="muted">600 × 1200 mm · halv forbandt · centered</span></h1>
-  <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle dark mode">Dark mode</button>
+  <div class="header-actions">
+    <button id="copy-link" class="theme-toggle" type="button" title="Copy a shareable link to this layout">Copy link</button>
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle dark mode">Dark mode</button>
+  </div>
 </header>
 <section class="templates" aria-label="Room templates">
   <span class="templates-label">Templates</span>
@@ -23,7 +26,7 @@
 3600, 0
 3600, 4800
 0, 4800</textarea>
-      <div class="hint">One vertex per line as "x, y" in mm. Walk the perimeter clockwise.</div>
+      <div class="hint">One vertex per line as "x, y" in mm. Or edit in the drawing: drag corners, drag an edge midpoint to add a corner, double-click a corner to remove it.</div>
       <div class="polygon-status" id="polygon-status"></div>
     </div>
     <button class="secondary" id="rotate-panels" type="button">Rotate panels 90°</button>
@@ -60,6 +63,7 @@
       <label class="toggle"><input type="checkbox" id="show-cuts" checked> Cut measurements</label>
       <label class="toggle"><input type="checkbox" id="show-screws" checked> Screw positions</label>
       <label class="toggle"><input type="checkbox" id="show-battens" checked> Wooden battens</label>
+      <label class="toggle"><input type="checkbox" id="show-handles" checked> Corner edit handles</label>
     </div>
 
     <div class="summary" id="summary"></div>
