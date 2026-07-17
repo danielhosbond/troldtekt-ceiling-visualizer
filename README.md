@@ -66,6 +66,17 @@ No build step. Hostable as static files on GitHub Pages.
   rotation allowed), so complementary cuts share a panel: a 600×340 and
   a 600×860 count as one panel, not two. The summary shows how many
   source panels the cut pieces come from.
+- **Cutting diagrams** — every cut group gets a letter ID (A, B, C…)
+  shown in the drawing, the cut list, and per-source-panel cutting
+  diagrams (on screen under the cut list and as a PDF page) that show
+  exactly which pieces to cut from each panel; blank areas are offcuts.
+- **Respect panel direction** — optional toggle that forbids 90°
+  rotation when packing (Troldtekt's surface pattern is directional);
+  the estimate and diagrams then keep every piece's installed
+  orientation, possibly at the cost of extra panels.
+- **Undo** — Ctrl/Cmd+Z reverts drawing edits (corner drags,
+  inserts/deletes, templates, rotate, optimize, re-center). Inside the
+  textarea the browser's native undo applies as usual.
 - **Cost estimate** — panel cost + screw cost + batten cost (kr./m × m
   required), summed in DKK.
 - **Live SVG drawing** with toggleable layers: room dimensions, full
@@ -160,7 +171,8 @@ __troldtekt.generatePanels(poly);              // optional: longAxisX, {dx, dy}
 __troldtekt.generateBattens(poly, 95);         // batten width in mm; optional axis/offset
 __troldtekt.totalBattenLength(battens);        // returns mm
 __troldtekt.groupPanels(panels);
-__troldtekt.estimatePurchase(fullCount, cutGroups, wastePct);
+__troldtekt.estimatePurchase(fullCount, cutPieces, wastePct, allowRotate);
+// cutPieces = [{w, h}] per cut piece, e.g. from cutPiecesFromPanels(panels)
 __troldtekt.optimizeLayout(poly, true);        // best {offset, longAxisX, tiny, panelsNeeded}
 __troldtekt.scoreLayout(poly, true, {dx:0, dy:0});
 __troldtekt.runOptimize();                     // same as clicking "Optimize layout"

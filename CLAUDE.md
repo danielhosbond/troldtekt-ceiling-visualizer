@@ -45,10 +45,17 @@ All logic lives in `app.js`.
    `full`, `edge`, `corner`, `shaped` (non-rectangular).
 4. `groupPanels(panels)` — buckets cut panels by (w, h) and computes per-group
    stats (count, type: edge / corner, pieces-per-source-panel).
-5. `estimatePurchase(...)` — packs all cut pieces into virtual 600×1200
+5. `estimatePurchase(fullCount, cutPieces, waste, allowRotate)` — packs
+   the flat cut-piece list (`cutPiecesFromPanels`) into virtual 600×1200
    source panels via `packCutPieces` (two-level guillotine,
-   first-fit-decreasing, 90° rotation allowed) so complementary cuts
-   share a panel, then applies the user-set waste %. Kerf is ignored.
+   first-fit-decreasing; 90° rotation unless the "respect panel
+   direction" toggle is on — Troldtekt's surface is directional).
+   Placements are recorded (panel-local mm rects) and returned as
+   `packedPanels` for the cutting diagrams: inline SVGs under the cut
+   list (`cutDiagramsHTML`) and a PDF page (`drawCutDiagrams`, takes
+   only the jsPDF surface it needs so tests stub it). Cut groups carry
+   letter IDs (`groupLetter`) linking drawing labels, cut-list rows,
+   and diagrams. Kerf is ignored.
 6. **Layout optimizer** (`optimizeLayout`) — grid-searches anchor
    offsets (50 mm step, both orientations) and returns the layout
    minimizing, in order: cuts < 150 mm, panels to purchase, cut-piece
@@ -77,7 +84,12 @@ All logic lives in `app.js`.
    `update()` calls `saveState()` → localStorage + `history.replaceState`.
    On load: URL hash > localStorage > HTML defaults. `hashchange`
    applies pasted hashes (our own writes are compared away).
-10. **Vertex editing** — `renderSVG` draws `data-vertex` circles on
+10. **Undo** — `pushHistory`/`undo` snapshot polygon text + anchor
+    offset + rotation before each programmatic mutation (handle drags,
+    vertex insert/delete, template, rotate, optimize, re-center);
+    Ctrl/Cmd+Z outside form fields pops the stack (max 50). Typing in
+    the textarea keeps the browser's native undo.
+11. **Vertex editing** — `renderSVG` draws `data-vertex` circles on
     corners and `data-edge` circles on edge midpoints (`.layer-handles`).
     Pointer events live on the SVG root (elements are re-created every
     frame; capture survives). Drags work on a copy of

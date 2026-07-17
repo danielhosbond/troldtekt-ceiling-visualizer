@@ -28,6 +28,7 @@ const els = !isBrowser ? null : {
   showScrews: document.getElementById('show-screws'),
   showBattens: document.getElementById('show-battens'),
   showHandles: document.getElementById('show-handles'),
+  respectDirection: document.getElementById('respect-direction'),
   copyLink: document.getElementById('copy-link'),
   zoomIn:  document.getElementById('zoom-in'),
   zoomOut: document.getElementById('zoom-out'),
@@ -528,8 +529,22 @@ function groupPanels(panels) {
             || (g.w * 2 <= PANEL_SHORT) || (g.h * 2 <= PANEL_SHORT),
     piecesPerPanel: piecesPerPanel(g.w, g.h),
   })).sort((a, b) => b.count - a.count);
+  cutGroups.forEach((g, i) => { g.letter = groupLetter(i); });
 
   return { fullCount, cutGroups, totalPieces: panels.length, cutCount: cuts.length };
+}
+
+// 0 → A, 25 → Z, 26 → AA … ids linking cut-list rows, drawing labels,
+// and cutting diagrams.
+function groupLetter(i) {
+  let s = '';
+  i++;
+  while (i > 0) {
+    i--;
+    s = String.fromCharCode(65 + (i % 26)) + s;
+    i = Math.floor(i / 26);
+  }
+  return s;
 }
 
 // How many cut pieces of (w×h) fit in a single 600×1200 panel.
@@ -544,62 +559,99 @@ function piecesPerPanel(w, h) {
 // complementary cuts share a panel (e.g. a 600×340 and a 600×860 both
 // come out of one 600×1200). Two-level guillotine, first-fit-decreasing:
 // a panel is divided into full-width strips along its 1200 mm length;
-// each strip holds pieces side by side across the 600 mm width. Pieces
-// may rotate 90°. Shaped cuts are packed by their bounding box
-// (conservative). Saw kerf is ignored — the most common pairing (two
-// pieces summing to exactly 1200 mm) is a single cut.
-function packCutPieces(pieces) {
+// each strip holds pieces side by side across the 600 mm width.
+// Placements are recorded (panel-local mm rects: x across the 600 mm
+// width, y along the 1200 mm length) so cutting diagrams can be drawn.
+//
+// With `allowRotate` (default) pieces may turn 90°; without it each
+// piece keeps its orientation — pass w = the piece's dimension across
+// the panel's short side and h = along the long side. Troldtekt boards
+// have a directional surface, so rotation-free packing is what the
+// "respect panel direction" toggle uses. Shaped cuts pack by their
+// bounding box (conservative). Saw kerf is ignored — the most common
+// pairing (two pieces summing to exactly 1200 mm) is a single cut.
+function packCutPieces(pieces, allowRotate = true) {
   const sorted = pieces
-    .map(p => ({ a: Math.min(p.w, p.h), b: Math.max(p.w, p.h) }))
+    .map(p => allowRotate
+      ? { a: Math.min(p.w, p.h), b: Math.max(p.w, p.h), letter: p.letter }
+      : { a: p.w, b: p.h, letter: p.letter }) // a across (≤600), b along (≤1200)
     .sort((p, q) => q.b - p.b || q.a - p.a);
 
-  const panels = []; // { freeLen, strips: [{ len, freeWidth }] }
+  const panels = []; // { freeLen, strips: [{ y0, len, usedWidth, pieces }] }
   for (const piece of sorted) {
-    if (packIntoStrip(panels, piece)) continue;
-    if (packIntoNewStrip(panels, piece)) continue;
+    if (packIntoStrip(panels, piece, allowRotate)) continue;
+    if (packIntoNewStrip(panels, piece, allowRotate)) continue;
     const panel = { freeLen: PANEL_LONG, strips: [] };
     panels.push(panel);
-    packIntoNewStrip([panel], piece); // always fits: len ≤ 1200
+    packIntoNewStrip([panel], piece, allowRotate); // always fits: len ≤ 1200
   }
   return panels;
 }
 
-function packIntoStrip(panels, piece) {
+function packPlace(strip, piece, across, along) {
+  strip.pieces.push({ x: strip.usedWidth, y: strip.y0, w: across, h: along, letter: piece.letter });
+  strip.usedWidth += across;
+}
+
+function packIntoStrip(panels, piece, allowRotate) {
   for (const panel of panels) {
     for (const s of panel.strips) {
+      const free = PANEL_SHORT - s.usedWidth;
       // Prefer the orientation whose long side runs along the strip,
       // so the piece eats as little strip width as possible.
-      if (piece.b <= s.len && piece.a <= s.freeWidth) { s.freeWidth -= piece.a; return true; }
-      if (piece.a <= s.len && piece.b <= s.freeWidth) { s.freeWidth -= piece.b; return true; }
+      if (piece.b <= s.len && piece.a <= free) { packPlace(s, piece, piece.a, piece.b); return true; }
+      if (allowRotate && piece.a <= s.len && piece.b <= free) { packPlace(s, piece, piece.b, piece.a); return true; }
     }
   }
   return false;
 }
 
-function packIntoNewStrip(panels, piece) {
+function packIntoNewStrip(panels, piece, allowRotate) {
   // Orient the piece so the new strip is as short as possible: long
-  // side across the 600 mm width when it fits, else along the length.
-  const len   = piece.b <= PANEL_SHORT ? piece.a : piece.b;
-  const width = piece.b <= PANEL_SHORT ? piece.b : piece.a;
+  // side across the 600 mm width when it fits (rotation allowed only).
+  const sideways = allowRotate && piece.b <= PANEL_SHORT;
+  const len   = sideways ? piece.a : piece.b;
+  const width = sideways ? piece.b : piece.a;
   for (const panel of panels) {
     if (len <= panel.freeLen) {
+      const s = { y0: PANEL_LONG - panel.freeLen, len, usedWidth: 0, pieces: [] };
+      packPlace(s, piece, width, len);
       panel.freeLen -= len;
-      panel.strips.push({ len, freeWidth: PANEL_SHORT - width });
+      panel.strips.push(s);
       return true;
     }
   }
   return false;
 }
 
-function estimatePurchase(fullCount, cutGroups, wastePct) {
-  const pieces = [];
-  for (const g of cutGroups) {
-    for (let i = 0; i < g.count; i++) pieces.push({ w: g.w, h: g.h });
-  }
-  const cutPanels = packCutPieces(pieces).length;
+// `cutPieces` is a flat list [{w, h, letter?}] — one entry per cut
+// piece (see packCutPieces for the orientation convention when
+// allowRotate is false). Returns the packed panels for the diagrams.
+function estimatePurchase(fullCount, cutPieces, wastePct, allowRotate = true) {
+  const packedPanels = packCutPieces(cutPieces, allowRotate);
+  const cutPanels = packedPanels.length;
   const layoutPanels = fullCount + cutPanels;
   const withWaste = Math.ceil(layoutPanels * (1 + wastePct / 100));
-  return { layoutPanels, withWaste, cutPanels };
+  return { layoutPanels, withWaste, cutPanels, packedPanels };
+}
+
+// Build the flat piece list for estimatePurchase from generated
+// panels. When direction is respected, each piece is oriented into
+// source-panel space: w = across the panel's 600 mm side, h = along
+// the 1200 mm side (for longAxisX grids the layout w runs along the
+// panel's long side, so the dims swap).
+function cutPiecesFromPanels(panels, longAxisX, respectDirection, letterByKey) {
+  const out = [];
+  for (const p of panels) {
+    if (p.isFull) continue;
+    const letter = letterByKey
+      ? letterByKey.get(`${Math.min(p.w, p.h)}x${Math.max(p.w, p.h)}`)
+      : undefined;
+    out.push(respectDirection
+      ? { w: longAxisX ? p.h : p.w, h: longAxisX ? p.w : p.h, letter }
+      : { w: p.w, h: p.h, letter });
+  }
+  return out;
 }
 
 // -------- Layout optimizer --------
@@ -614,10 +666,11 @@ function estimatePurchase(fullCount, cutGroups, wastePct) {
 // distinct layout.
 const OPTIMIZE_STEP = 50; // mm search grid
 
-function scoreLayout(roomPoly, longAxisX, offset) {
+function scoreLayout(roomPoly, longAxisX, offset, allowRotate = true) {
   const panels = generatePanels(roomPoly, longAxisX, offset);
   const group = groupPanels(panels);
-  const purchase = estimatePurchase(group.fullCount, group.cutGroups, 0);
+  const pieces = cutPiecesFromPanels(panels, longAxisX, !allowRotate, null);
+  const purchase = estimatePurchase(group.fullCount, pieces, 0, allowRotate);
   return {
     tiny: panels.filter(p => p.tooSmall).length,
     panelsNeeded: purchase.layoutPanels,
@@ -636,13 +689,13 @@ function layoutOffsetMag(dLong, dCross, isNaturalOrientation) {
   return Math.abs(dLong) + Math.abs(dCross) + (isNaturalOrientation ? 0 : 1);
 }
 
-function optimizeLayout(roomPoly, naturalLongAxisX, step = OPTIMIZE_STEP) {
+function optimizeLayout(roomPoly, naturalLongAxisX, step = OPTIMIZE_STEP, allowRotate = true) {
   let best = null;
   for (const longAxisX of [naturalLongAxisX, !naturalLongAxisX]) {
     for (let dLong = -PANEL_LONG / 2 + step; dLong <= PANEL_LONG / 2; dLong += step) {
       for (let dCross = -PANEL_SHORT / 2 + step; dCross <= PANEL_SHORT / 2; dCross += step) {
         const offset = longAxisX ? { dx: dLong, dy: dCross } : { dx: dCross, dy: dLong };
-        const s = scoreLayout(roomPoly, longAxisX, offset);
+        const s = scoreLayout(roomPoly, longAxisX, offset, allowRotate);
         s.longAxisX = longAxisX;
         s.offset = offset;
         s.offsetMag = layoutOffsetMag(dLong, dCross, longAxisX === naturalLongAxisX);
@@ -794,6 +847,7 @@ function encodeStateHash(s) {
   num('bp', s.battenPrice);
   num('bw', s.battenWidth);
   if (s.rotated) parts.push('rot=1');
+  if (s.respectDirection) parts.push('dir=1');
   if (s.offset && (s.offset.dx || s.offset.dy)) {
     parts.push(`ox=${s.offset.dx || 0}`, `oy=${s.offset.dy || 0}`);
   }
@@ -817,6 +871,7 @@ function decodeStateHash(hash) {
     else if (k === 'bp')   s.battenPrice = parseFloat(v);
     else if (k === 'bw')   s.battenWidth = parseFloat(v);
     else if (k === 'rot')  s.rotated = v === '1';
+    else if (k === 'dir')  s.respectDirection = v === '1';
     else if (k === 'ox')   ox = parseFloat(v);
     else if (k === 'oy')   oy = parseFloat(v);
     else if (k === 'hide') s.hide = v;
@@ -827,6 +882,7 @@ function decodeStateHash(hash) {
   // fill them in so a shared link renders the same for every recipient
   // regardless of their previous rotation/toggle state.
   if (s.rotated === undefined) s.rotated = false;
+  if (s.respectDirection === undefined) s.respectDirection = false;
   if (s.hide === undefined) s.hide = '';
   return s;
 }
@@ -1012,7 +1068,8 @@ function renderSVG(roomPoly, panels, battens, battenWidth, longAxisX, offset) {
     if (p.isFull) continue;
     if (p.w < 90 || p.h < 60) continue;
     const c = polygonCentroid(p.polygon);
-    const label = p.isRectangular ? `${p.w}×${p.h}` : `~${p.w}×${p.h}`;
+    const dims = p.isRectangular ? `${p.w}×${p.h}` : `~${p.w}×${p.h}`;
+    const label = p.cutLetter ? `${p.cutLetter} · ${dims}` : dims;
     const minDim = Math.min(p.w, p.h);
     const size = minDim < 220 ? 28 : 42;
     el(gCuts, 'text', {
@@ -1213,6 +1270,57 @@ function drawOffsetH(g, y, x0, x1, label) {
   }, label);
 }
 
+// Draw the per-source-panel cutting diagrams with plain jsPDF
+// primitives (rect/text), 4 diagrams per row, paginating as needed.
+// Takes only the pdf API surface it uses, so tests can pass a stub.
+function drawCutDiagrams(pdf, packedPanels, opts) {
+  const { margin, pageW, pageH, startY } = opts;
+  const scale = 0.07;  // 600×1200 mm → 42×84 mm on paper
+  const dW = PANEL_SHORT * scale;
+  const dH = PANEL_LONG * scale;
+  const gap = 6, captionH = 7;
+  const perRow = Math.max(1, Math.floor((pageW - 2 * margin + gap) / (dW + gap)));
+  let x = margin, y = startY, col = 0;
+
+  packedPanels.forEach((panel, idx) => {
+    if (y + dH + captionH > pageH - 12) {
+      pdf.addPage();
+      x = margin; y = 20; col = 0;
+    }
+    pdf.setLineWidth(0.3);
+    pdf.setDrawColor(130, 130, 130);
+    pdf.rect(x, y, dW, dH);
+    for (const s of panel.strips) {
+      for (const pc of s.pieces) {
+        pdf.setDrawColor(176, 138, 58);
+        pdf.setFillColor(254, 243, 199);
+        pdf.rect(x + pc.x * scale, y + pc.y * scale, pc.w * scale, pc.h * scale, 'FD');
+        const cx = x + (pc.x + pc.w / 2) * scale;
+        const cy = y + (pc.y + pc.h / 2) * scale;
+        pdf.setTextColor(146, 64, 14);
+        if (pc.letter && pc.w * scale > 6 && pc.h * scale > 6) {
+          pdf.setFont('helvetica', 'bold');
+          pdf.setFontSize(8);
+          pdf.text(String(pc.letter), cx, cy + 1, { align: 'center' });
+        }
+        if (pc.w * scale > 16 && pc.h * scale > 12) {
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(5);
+          pdf.text(`${pc.w}×${pc.h}`, cx, cy + 4.4, { align: 'center' });
+        }
+      }
+    }
+    pdf.setTextColor(85, 85, 85);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(8);
+    pdf.text(`Panel ${idx + 1}`, x + dW / 2, y + dH + 4.5, { align: 'center' });
+    col++;
+    if (col >= perRow) { col = 0; x = margin; y += dH + captionH + 4; }
+    else x += dW + gap;
+  });
+  pdf.setTextColor(26, 26, 26);
+}
+
 // -------- UI: summary, cut list, layer toggles --------
 
 function renderSummary(roomPoly, group, purchase, wastePct, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice, so) {
@@ -1248,10 +1356,11 @@ function renderSummary(roomPoly, group, purchase, wastePct, screwCount, battenMe
   `;
 }
 
-function renderCutList(group, offBattenScrews) {
+function renderCutList(group, offBattenScrews, packedPanels) {
   const { fullCount, cutGroups } = group;
   let rows = '';
   rows += `<tr>
+    <td>—</td>
     <td class="num">${fullCount}</td>
     <td class="num">600 × 1200</td>
     <td><span class="badge full">full</span></td>
@@ -1262,6 +1371,7 @@ function renderCutList(group, offBattenScrews) {
       ? `${g.piecesPerPanel} per source panel`
       : '1 per source panel';
     rows += `<tr class="${g.tooSmall ? 'warn' : ''}">
+      <td><span class="badge">${g.letter}</span></td>
       <td class="num">${g.count}</td>
       <td class="num">${g.w} × ${g.h}</td>
       <td><span class="badge ${g.type}">${g.type}</span></td>
@@ -1271,10 +1381,11 @@ function renderCutList(group, offBattenScrews) {
   let html = `
     <h2>Cut List</h2>
     <table>
-      <thead><tr><th>Qty</th><th>Size (mm)</th><th>Type</th><th>Notes</th></tr></thead>
+      <thead><tr><th>ID</th><th>Qty</th><th>Size (mm)</th><th>Type</th><th>Notes</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   `;
+  html += cutDiagramsHTML(packedPanels);
   const hasTiny = cutGroups.some(g => g.tooSmall);
   if (hasTiny) {
     html += `<div class="warn-banner">
@@ -1314,17 +1425,19 @@ function runOptimize() {
   const naturalLongAxisX = bb.w >= bb.h;
   const currentLongAxisX = panelRotated ? !naturalLongAxisX : naturalLongAxisX;
 
-  const current = scoreLayout(roomPoly, currentLongAxisX, anchorOffset);
+  const allowRotate = !els.respectDirection.checked;
+  const current = scoreLayout(roomPoly, currentLongAxisX, anchorOffset, allowRotate);
   const cur = { dLong: currentLongAxisX ? anchorOffset.dx : anchorOffset.dy,
                 dCross: currentLongAxisX ? anchorOffset.dy : anchorOffset.dx };
   current.offsetMag = layoutOffsetMag(cur.dLong, cur.dCross, currentLongAxisX === naturalLongAxisX);
 
-  const best = optimizeLayout(roomPoly, naturalLongAxisX);
+  const best = optimizeLayout(roomPoly, naturalLongAxisX, OPTIMIZE_STEP, allowRotate);
   if (!betterLayout(best, current)) {
     renderAnchorStatus('already optimal');
     return;
   }
 
+  pushHistory();
   panelRotated = best.longAxisX !== naturalLongAxisX;
   localStorage.setItem('troldtekt-rotated', String(panelRotated));
   anchorOffset = best.offset;
@@ -1335,6 +1448,40 @@ function runOptimize() {
   if (best.panelsNeeded < current.panelsNeeded) parts.push(`panels: ${current.panelsNeeded} → ${best.panelsNeeded} (before waste)`);
   if (best.cutCount < current.cutCount) parts.push(`cut pieces: ${current.cutCount} → ${best.cutCount}`);
   renderAnchorStatus(parts.length ? `optimized · ${parts.join(' · ')}` : 'optimized');
+}
+
+// Small inline-SVG cutting diagrams under the cut list: one 600×1200
+// rectangle per source panel with the packed pieces drawn in place.
+// Letters match the cut-list IDs; blank areas are offcuts.
+function cutDiagramsHTML(packedPanels) {
+  if (!packedPanels || !packedPanels.length) return '';
+  const diagrams = packedPanels.map((panel, idx) => {
+    let inner = '';
+    for (const s of panel.strips) {
+      for (const pc of s.pieces) {
+        inner += `<rect class="piece" x="${pc.x}" y="${pc.y}" width="${pc.w}" height="${pc.h}"/>`;
+        const cx = pc.x + pc.w / 2, cy = pc.y + pc.h / 2;
+        if (pc.letter && pc.w >= 90 && pc.h >= 90) {
+          inner += `<text x="${cx}" y="${cy}" font-size="110" font-weight="600" text-anchor="middle" dominant-baseline="middle">${pc.letter}</text>`;
+        }
+        if (pc.w >= 230 && pc.h >= 190) {
+          inner += `<text x="${cx}" y="${cy + 105}" font-size="55" text-anchor="middle" dominant-baseline="middle">${pc.w}×${pc.h}</text>`;
+        }
+      }
+    }
+    return `<div class="diagram">
+      <svg viewBox="-15 -15 630 1230" aria-label="Cutting diagram for source panel ${idx + 1}">
+        <rect class="outline" x="0" y="0" width="600" height="1200"/>
+        ${inner}
+      </svg>
+      <span>Panel ${idx + 1}</span>
+    </div>`;
+  }).join('');
+  return `<div class="cut-diagrams">
+    <h2>Cutting Diagrams</h2>
+    <div class="diagrams-note">One rectangle per source panel (600 × 1200). Letters match the cut list; blank areas are offcuts.</div>
+    <div class="diagrams">${diagrams}</div>
+  </div>`;
 }
 
 function updateLayerClasses() {
@@ -1355,6 +1502,7 @@ function collectState() {
     battenPrice: els.battenPrice.value,
     battenWidth: els.battenWidth.value,
     rotated: panelRotated,
+    respectDirection: els.respectDirection.checked,
     offset: anchorOffset,
     hide: LAYER_KEYS.filter(([, id]) => !els[id].checked).map(([k]) => k).join(''),
   };
@@ -1372,12 +1520,44 @@ function applyState(s) {
     panelRotated = !!s.rotated;
     localStorage.setItem('troldtekt-rotated', String(panelRotated));
   }
+  if (s.respectDirection !== undefined) els.respectDirection.checked = !!s.respectDirection;
   anchorOffset = s.offset
     ? { dx: parseFloat(s.offset.dx) || 0, dy: parseFloat(s.offset.dy) || 0 }
     : { dx: 0, dy: 0 };
   if (s.hide !== undefined) {
     for (const [k, id] of LAYER_KEYS) els[id].checked = !s.hide.includes(k);
   }
+}
+
+// Undo history for programmatic shape/layout mutations (handle drags,
+// vertex insert/delete, templates, rotate, optimize, re-center) —
+// native textarea undo covers typing, so those are left to the
+// browser. One snapshot per gesture, captured before the mutation.
+const undoHistory = [];
+const UNDO_MAX = 50;
+
+function pushHistory() {
+  const snap = {
+    polygonText: els.polygon.value,
+    offset: { ...anchorOffset },
+    rotated: panelRotated,
+  };
+  const last = undoHistory[undoHistory.length - 1];
+  if (last && last.polygonText === snap.polygonText
+      && last.offset.dx === snap.offset.dx && last.offset.dy === snap.offset.dy
+      && last.rotated === snap.rotated) return;
+  undoHistory.push(snap);
+  if (undoHistory.length > UNDO_MAX) undoHistory.shift();
+}
+
+function undo() {
+  const snap = undoHistory.pop();
+  if (!snap) return;
+  els.polygon.value = snap.polygonText;
+  anchorOffset = { ...snap.offset };
+  panelRotated = snap.rotated;
+  localStorage.setItem('troldtekt-rotated', String(panelRotated));
+  update();
 }
 
 let lastWrittenHash = '';
@@ -1464,14 +1644,20 @@ function update() {
   const battenMeters = totalBattenLength(battens) / 1000;
   for (const p of panels) p.screws = placeScrews(p, battens, battenWidth, longAxisX);
   const group  = groupPanels(panels);
-  const purchase = estimatePurchase(group.fullCount, group.cutGroups, waste);
+  const letterByKey = new Map(group.cutGroups.map(g => [`${g.w}x${g.h}`, g.letter]));
+  for (const p of panels) {
+    if (!p.isFull) p.cutLetter = letterByKey.get(`${Math.min(p.w, p.h)}x${Math.max(p.w, p.h)}`);
+  }
+  const respectDirection = els.respectDirection.checked;
+  const cutPieces = cutPiecesFromPanels(panels, longAxisX, respectDirection, letterByKey);
+  const purchase = estimatePurchase(group.fullCount, cutPieces, waste, !respectDirection);
   const screwCount = totalScrewCount(panels);
   const offBatten = offBattenScrewCount(panels);
   const costs = computeCosts(purchase, screwCount, battenMeters, panelPrice, screwPackPrice, battenPrice);
   const settingOut = computeSettingOut(roomPoly, longAxisX, anchorOffset);
   renderSVG(roomPoly, panels, battens, battenWidth, longAxisX, anchorOffset);
   renderSummary(roomPoly, group, purchase, waste, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice, settingOut);
-  renderCutList(group, offBatten);
+  renderCutList(group, offBatten, purchase.packedPanels);
   renderAnchorStatus();
   updateLayerClasses();
   lastState = { roomPoly, waste, panels, battens, battenMeters, battenWidth, group, purchase, screwCount, offBatten, costs, panelPrice, screwPackPrice, battenPrice, settingOut };
@@ -1492,7 +1678,9 @@ if (isBrowser) {
   [els.showDims, els.showLab, els.showCuts, els.showScrews, els.showBattens, els.showHandles].forEach(c =>
     c.addEventListener('change', () => { updateLayerClasses(); saveState(); }));
   els.exportBtn.addEventListener('click', exportPDF);
+  els.respectDirection.addEventListener('change', update);
   els.rotateBtn.addEventListener('click', () => {
+    pushHistory();
     panelRotated = !panelRotated;
     localStorage.setItem('troldtekt-rotated', String(panelRotated));
     anchorOffset = { dx: 0, dy: 0 }; // offset was tuned to the other axis
@@ -1512,8 +1700,19 @@ if (isBrowser) {
     }, 30);
   });
   els.recenterBtn.addEventListener('click', () => {
+    pushHistory();
     anchorOffset = { dx: 0, dy: 0 };
     update();
+  });
+  // Ctrl/Cmd+Z outside form fields undoes shape/layout mutations
+  // (inside the textarea and inputs, the browser's own undo applies).
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+      const t = e.target;
+      if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) return;
+      e.preventDefault();
+      undo();
+    }
   });
   els.copyLink.addEventListener('click', async () => {
     saveState();
@@ -1661,6 +1860,7 @@ if (isBrowser) {
       index = i + 1;
       poly.splice(index, 0, { x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2) });
     }
+    pushHistory(); // one undo step per drag gesture
     vertexDrag = { poly, index };
     anchorOffset = { dx: 0, dy: 0 }; // the shape is changing
     if (isEdge) {
@@ -1728,6 +1928,7 @@ if (isBrowser) {
     if (!t.dataset || t.dataset.vertex === undefined || !lastState) return;
     const poly = lastState.roomPoly.map(p => ({ x: p.x, y: p.y }));
     if (poly.length <= 3) return;
+    pushHistory();
     poly.splice(+t.dataset.vertex, 1);
     anchorOffset = { dx: 0, dy: 0 };
     writePolyToTextarea(poly);
@@ -1831,6 +2032,7 @@ function renderTemplates() {
 }
 
 function applyTemplate(template, card) {
+  pushHistory();
   els.polygon.value = template.polygon.map(p => `${p.x}, ${p.y}`).join('\n');
   anchorOffset = { dx: 0, dy: 0 };
   zoomView = null;
@@ -1977,7 +2179,7 @@ async function exportPDF() {
     pdf.setFont('helvetica', 'bold'); pdf.setFontSize(11);
     pdf.text('Cut list', margin, y); y += 4;
 
-    const colX = { qty: margin + 2, size: margin + 24, type: margin + 62, notes: margin + 92 };
+    const colX = { id: margin + 2, qty: margin + 14, size: margin + 32, type: margin + 68, notes: margin + 96 };
     const rowH = 5.5;
     const tableW = pageW - 2 * margin;
 
@@ -1987,6 +2189,7 @@ async function exportPDF() {
     pdf.setTextColor(85, 85, 85);
     pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8);
     const headerBaseline = y + rowH - 1.8;
+    pdf.text('ID',        colX.id,    headerBaseline);
     pdf.text('QTY',       colX.qty,   headerBaseline);
     pdf.text('SIZE (MM)', colX.size,  headerBaseline);
     pdf.text('TYPE',      colX.type,  headerBaseline);
@@ -2004,20 +2207,32 @@ async function exportPDF() {
       if (y + rowH > pageH - 15) { pdf.addPage(); y = 20; }
       if (opts.warn) pdf.setTextColor(153, 27, 27);
       const baseline = y + rowH - 1.6;
-      pdf.text(cells[0], colX.qty,   baseline);
-      pdf.text(cells[1], colX.size,  baseline);
-      pdf.text(cells[2], colX.type,  baseline);
-      pdf.text(cells[3], colX.notes, baseline);
+      pdf.text(cells[0], colX.id,    baseline);
+      pdf.text(cells[1], colX.qty,   baseline);
+      pdf.text(cells[2], colX.size,  baseline);
+      pdf.text(cells[3], colX.type,  baseline);
+      pdf.text(cells[4], colX.notes, baseline);
       y += rowH;
       pdf.setDrawColor(234, 234, 227);
       pdf.line(margin, y, margin + tableW, y);
       if (opts.warn) pdf.setTextColor(26, 26, 26);
     };
 
-    drawRow([String(group.fullCount), '600 × 1200', 'full', '—']);
+    drawRow(['—', String(group.fullCount), '600 × 1200', 'full', '—']);
     for (const g of group.cutGroups) {
       const note = `${g.piecesPerPanel} per source panel` + (g.tooSmall ? '  (< 150 mm)' : '');
-      drawRow([String(g.count), `${g.w} × ${g.h}`, g.type, note], { warn: g.tooSmall });
+      drawRow([g.letter, String(g.count), `${g.w} × ${g.h}`, g.type, note], { warn: g.tooSmall });
+    }
+
+    if (purchase.packedPanels && purchase.packedPanels.length) {
+      pdf.addPage();
+      pdf.setFont('helvetica', 'bold'); pdf.setFontSize(14);
+      pdf.text('Cutting Diagrams', margin, 16);
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9);
+      pdf.setTextColor(85, 85, 85);
+      pdf.text('One rectangle per 600 × 1200 source panel. Letters match the cut list; blank areas are offcuts.', margin, 22);
+      pdf.setTextColor(26, 26, 26);
+      drawCutDiagrams(pdf, purchase.packedPanels, { margin, pageW, pageH, startY: 30 });
     }
 
     pdf.save(`troldtekt-${W}x${L}.pdf`);
@@ -2035,7 +2250,8 @@ const __api = {
   parsePolygon, polygonBBox, polygonArea, polygonSignedArea, polygonCentroid,
   pointInPolygon, clipPolygonByRect, findSelfIntersection, segmentsIntersect,
   generatePanels, generateBattens, totalBattenLength, computeSettingOut,
-  groupPanels, piecesPerPanel, estimatePurchase, packCutPieces,
+  groupPanels, piecesPerPanel, groupLetter, estimatePurchase, packCutPieces,
+  cutPiecesFromPanels, drawCutDiagrams,
   scoreLayout, optimizeLayout, betterLayout,
   encodeStateHash, decodeStateHash, snapVertex, fitViewBox, zoomViewBox,
   placeScrews, screwOnBatten, totalScrewCount, offBattenScrewCount,

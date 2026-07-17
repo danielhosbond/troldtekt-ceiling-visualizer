@@ -123,35 +123,107 @@ check(T.piecesPerPanel(600, 1200) === 1, 'piecesPerPanel 600x1200 = 1');
 check(T.piecesPerPanel(200, 1200) === 3, 'piecesPerPanel 200x1200 = 3');
 
 // ---- packing / purchase estimate ----
+const pieces = (w, h, n) => Array.from({ length: n }, () => ({ w, h }));
 {
-  const g = (w, h, count) => ({ w, h, count });
-  check(T.estimatePurchase(0, [g(600, 340, 1), g(600, 860, 1)], 0).cutPanels === 1,
+  check(T.estimatePurchase(0, [...pieces(600, 340, 1), ...pieces(600, 860, 1)], 0).cutPanels === 1,
         'packing: 600x340 + 600x860 share one panel');
-  check(T.estimatePurchase(0, [g(300, 600, 4)], 0).cutPanels === 1,
+  check(T.estimatePurchase(0, pieces(300, 600, 4), 0).cutPanels === 1,
         'packing: 4x 300x600 from one panel');
-  check(T.estimatePurchase(0, [g(250, 1200, 2)], 0).cutPanels === 1,
+  check(T.estimatePurchase(0, pieces(250, 1200, 2), 0).cutPanels === 1,
         'packing: 2x 250x1200 side by side in one panel');
-  check(T.estimatePurchase(0, [g(600, 700, 2)], 0).cutPanels === 2,
+  check(T.estimatePurchase(0, pieces(600, 700, 2), 0).cutPanels === 2,
         'packing: 700-long pieces cannot pair (1400 > 1200)');
-  check(T.estimatePurchase(0, [g(600, 300, 1), g(250, 900, 2)], 0).cutPanels === 1,
+  check(T.estimatePurchase(0, [...pieces(600, 300, 1), ...pieces(250, 900, 2)], 0).cutPanels === 1,
         'packing: mixed strips + side-by-side fills one panel');
-  check(T.estimatePurchase(0, [g(600, 300, 2), g(250, 900, 2)], 0).cutPanels === 2,
+  check(T.estimatePurchase(0, [...pieces(600, 300, 2), ...pieces(250, 900, 2)], 0).cutPanels === 2,
         'packing: 810000 mm² of cuts cannot fit one 720000 mm² panel');
-  const p = T.estimatePurchase(5, [g(600, 340, 2), g(600, 860, 2)], 10);
+  const p = T.estimatePurchase(5, [...pieces(600, 340, 2), ...pieces(600, 860, 2)], 10);
   check(p.layoutPanels === 7, 'packing: fullCount + packed cut panels');
   check(p.withWaste === Math.ceil(7 * 1.1), 'packing: waste applied after packing');
+}
+{
+  // Direction-respecting packing never rotates: these two pieces only
+  // share a panel if the 600x250 may turn 90°.
+  const mix = [{ w: 600, h: 250 }, { w: 250, h: 1200 }];
+  check(T.estimatePurchase(0, mix, 0, true).cutPanels === 1,
+        'packing: rotation lets 600x250 nest beside 250x1200');
+  check(T.estimatePurchase(0, mix, 0, false).cutPanels === 2,
+        'packing: respecting direction forbids the rotated nesting');
+  // Placements in no-rotate mode keep the given orientation.
+  const packed = T.packCutPieces([{ w: 600, h: 250, letter: 'A' }], false);
+  const pc = packed[0].strips[0].pieces[0];
+  check(pc.w === 600 && pc.h === 250 && pc.letter === 'A',
+        'packing: no-rotate placement keeps w across, h along');
 }
 {
   // On a real room the packed estimate is never worse than the old
   // per-group formula, and never below the area lower bound.
   for (const [name, poly] of [['rect', RECT], ['L-shape', LSHAPE], ['trapezoid', TRAPEZOID]]) {
-    const g = T.groupPanels(T.generatePanels(poly));
+    const panels = T.generatePanels(poly);
+    const g = T.groupPanels(panels);
     const perGroup = g.cutGroups.reduce((s, x) => s + Math.ceil(x.count / x.piecesPerPanel), 0);
-    const est = T.estimatePurchase(g.fullCount, g.cutGroups, 0);
+    const cutPieces = T.cutPiecesFromPanels(panels, undefined, false, null);
+    const est = T.estimatePurchase(g.fullCount, cutPieces, 0);
     check(est.cutPanels <= perGroup, `${name}: packing beats or matches per-group estimate`);
-    const areaBound = Math.ceil(g.cutGroups.reduce((s, x) => s + x.count * x.w * x.h, 0) / 720000);
+    const areaBound = Math.ceil(cutPieces.reduce((s, x) => s + x.w * x.h, 0) / 720000);
     check(est.cutPanels >= areaBound, `${name}: packing respects the area lower bound`);
+
+    // Every recorded placement is inside its panel, strips don't
+    // overlap, and pieces within a strip don't overlap.
+    let placementsOK = true, placedArea = 0;
+    for (const panel of est.packedPanels) {
+      const strips = [...panel.strips].sort((a, b) => a.y0 - b.y0);
+      let prevEnd = 0;
+      for (const s of strips) {
+        if (s.y0 < prevEnd - 1e-6 || s.y0 + s.len > 1200 + 1e-6) placementsOK = false;
+        prevEnd = s.y0 + s.len;
+        let prevX = 0;
+        for (const piece of [...s.pieces].sort((a, b) => a.x - b.x)) {
+          if (piece.x < prevX - 1e-6 || piece.x + piece.w > 600 + 1e-6) placementsOK = false;
+          if (piece.y !== s.y0 || piece.h > s.len + 1e-6) placementsOK = false;
+          prevX = piece.x + piece.w;
+          placedArea += piece.w * piece.h;
+        }
+      }
+    }
+    check(placementsOK, `${name}: cutting-diagram placements are valid`);
+    const inputArea = cutPieces.reduce((s, x) => s + x.w * x.h, 0);
+    check(approx(placedArea, inputArea), `${name}: every piece is placed exactly once`);
   }
+}
+{
+  // Group lettering: A for the biggest group, all letters distinct.
+  const g = T.groupPanels(T.generatePanels(TRAPEZOID));
+  check(g.cutGroups[0] && g.cutGroups[0].letter === 'A', 'letters: first group is A');
+  const letters = g.cutGroups.map(x => x.letter);
+  check(new Set(letters).size === letters.length, 'letters: all groups distinct');
+  check(T.groupLetter(0) === 'A' && T.groupLetter(25) === 'Z' && T.groupLetter(26) === 'AA',
+        'letters: base-26 rollover');
+}
+{
+  // PDF cutting diagrams drawn against a stub: every piece rect lies
+  // inside one of the panel outline rects, and long lists paginate.
+  const rects = [];
+  let pages = 0;
+  const stub = {
+    rect: (x, y, w, h, style) => rects.push({ x, y, w, h, filled: style === 'FD' }),
+    text: () => {}, setFont: () => {}, setFontSize: () => {},
+    setFillColor: () => {}, setDrawColor: () => {}, setTextColor: () => {},
+    setLineWidth: () => {}, addPage: () => { pages++; },
+  };
+  const est = T.estimatePurchase(0, [
+    ...pieces(600, 340, 9), ...pieces(600, 860, 9), ...pieces(250, 1200, 4),
+  ], 0);
+  T.drawCutDiagrams(stub, est.packedPanels, { margin: 12, pageW: 210, pageH: 297, startY: 30 });
+  const outlines = rects.filter(r => !r.filled);
+  const pieceRects = rects.filter(r => r.filled);
+  check(outlines.length === est.packedPanels.length, 'diagrams: one outline per source panel');
+  const totalPieces = est.packedPanels.reduce((s, p) => s + p.strips.reduce((t, st) => t + st.pieces.length, 0), 0);
+  check(pieceRects.length === totalPieces, 'diagrams: one rect per placed piece');
+  const inside = pieceRects.every(pr => outlines.some(o =>
+    pr.x >= o.x - 0.01 && pr.y >= o.y - 0.01 &&
+    pr.x + pr.w <= o.x + o.w + 0.01 && pr.y + pr.h <= o.y + o.h + 0.01));
+  check(inside, 'diagrams: every piece rect sits inside a panel outline');
 }
 
 // ---- layout optimizer ----
@@ -288,6 +360,11 @@ screwChecks('L-shape', LSHAPE);
   check(back.waste === 12 && back.panelPrice === 129 && back.battenPrice === 10.5
         && back.screwPackPrice === 170 && back.battenWidth === 95, 'hash: numbers round-trip');
   check(back.rotated === true, 'hash: rotation round-trips');
+  const dirHash = T.encodeStateHash({ ...state, respectDirection: true });
+  check(dirHash.includes('dir=1') && T.decodeStateHash(dirHash).respectDirection === true,
+        'hash: direction toggle round-trips');
+  check(T.decodeStateHash(hash).respectDirection === false,
+        'hash: direction toggle defaults to off when omitted');
   check(back.offset.dx === 150 && back.offset.dy === -100, 'hash: anchor offset round-trips');
   check(back.hide === 'cs', 'hash: hidden layers round-trip');
 }

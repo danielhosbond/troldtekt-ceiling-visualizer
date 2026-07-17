@@ -268,6 +268,22 @@ svg#drawing { touch-action: none; }
   border-radius: 0 3px 3px 0;
 }
 
+.cut-diagrams { margin-top: 1.5rem; }
+.cut-diagrams h2 {
+  margin: 0 0 0.25rem; font-size: 0.78rem; text-transform: uppercase;
+  letter-spacing: 0.06em; color: #444; font-weight: 600;
+}
+.cut-diagrams .diagrams-note { font-size: 0.75rem; color: #888; margin-bottom: 0.6rem; }
+.cut-diagrams .diagrams { display: flex; flex-wrap: wrap; gap: 0.9rem; }
+.cut-diagrams .diagram {
+  display: flex; flex-direction: column; align-items: center; gap: 0.3rem;
+  font-size: 0.72rem; color: #888;
+}
+.cut-diagrams svg { width: 88px; height: auto; display: block; }
+.cut-diagrams .outline { fill: #fcfcfa; stroke: #999; stroke-width: 8; }
+.cut-diagrams .piece   { fill: #fef3c7; stroke: #b08a3a; stroke-width: 6; }
+.cut-diagrams text     { font-family: inherit; fill: #92400e; }
+
 /* -------- Dark mode (dark grey + orange) -------- */
 
 body.dark {
@@ -394,6 +410,11 @@ body.dark .warn-banner {
   border-left-color: #ef4444;
 }
 
+body.dark .cut-diagrams h2 { color: #b0b0b0; }
+body.dark .cut-diagrams .outline { fill: #2a2a2a; stroke: #666; }
+body.dark .cut-diagrams .piece   { fill: #3a2410; stroke: #f97316; }
+body.dark .cut-diagrams text     { fill: #fdba74; }
+
 /* -------- Print (zero-dependency alternative to PDF export) --------
    The drawing, summary, and cut list print; input chrome does not.
    app.js swaps the SVG to the light palette on beforeprint. Must stay
@@ -432,4 +453,9 @@ body.dark .warn-banner {
   body.dark .cut-list th { background: #eee; color: #333; border-bottom-color: #bbb; }
   body.dark .cut-list td { border-bottom-color: #ddd; }
   .warn-banner, body.dark .warn-banner { background: #fff; color: #991b1b; }
+  .cut-diagrams { break-inside: avoid; }
+  .cut-diagrams h2, body.dark .cut-diagrams h2 { color: #000; }
+  body.dark .cut-diagrams .outline { fill: #fff; stroke: #999; }
+  body.dark .cut-diagrams .piece   { fill: #fef3c7; stroke: #b08a3a; }
+  body.dark .cut-diagrams text     { fill: #92400e; }
 }
