@@ -28,8 +28,15 @@ const STRINGS = {
     darkMode: 'Dark mode', lightMode: 'Light mode',
     templates: 'Templates',
     polygonLabel: 'Room polygon', polygonUnit: 'vertices in mm',
-    polygonHint: 'One vertex per line as "x, y" in mm. Or edit in the drawing: drag corners, drag an edge midpoint to add a corner, double-click a corner to remove it. Ctrl+Z undoes drawing edits.',
+    polygonHint: 'One vertex per line as "x, y" in mm. Separate the room outline from openings (columns, skylights) with a blank line. Or edit in the drawing: drag corners, drag an edge midpoint to add a corner, double-click a corner to remove it. Ctrl+Z undoes drawing edits.',
     statusFallback: 'Polygon needs ≥ 3 vertices',
+    statusHoles: 'openings: {0}',
+    holeLabel: 'Opening {0}',
+    errHoleOutside: 'Opening {0} extends outside the room.',
+    errHoleOverlap: 'Openings {0} and {1} overlap.',
+    legHole: 'Opening',
+    type_cutout: 'cutout',
+    cutoutNote: 'with opening cutout',
     rotateBtn: 'Rotate panels 90°',
     optimizeBtn: 'Optimize layout', recenterBtn: 'Re-center', optimizing: 'Optimizing…',
     anchorCentered: 'Anchor: centered',
@@ -112,8 +119,15 @@ const STRINGS = {
     darkMode: 'Mørk tilstand', lightMode: 'Lys tilstand',
     templates: 'Skabeloner',
     polygonLabel: 'Rumpolygon', polygonUnit: 'hjørner i mm',
-    polygonHint: 'Ét hjørne pr. linje som "x, y" i mm. Eller redigér i tegningen: træk i hjørnerne, træk i en vægs midtpunkt for at tilføje et hjørne, dobbeltklik på et hjørne for at fjerne det. Ctrl+Z fortryder tegneændringer.',
+    polygonHint: 'Ét hjørne pr. linje som "x, y" i mm. Adskil rummets omrids fra udsparinger (søjler, ovenlys) med en tom linje. Eller redigér i tegningen: træk i hjørnerne, træk i en vægs midtpunkt for at tilføje et hjørne, dobbeltklik på et hjørne for at fjerne det. Ctrl+Z fortryder tegneændringer.',
     statusFallback: 'Polygonen skal have ≥ 3 hjørner',
+    statusHoles: 'udsparinger: {0}',
+    holeLabel: 'Udsparing {0}',
+    errHoleOutside: 'Udsparing {0} går ud over rummet.',
+    errHoleOverlap: 'Udsparingerne {0} og {1} overlapper hinanden.',
+    legHole: 'Udsparing',
+    type_cutout: 'udsparing',
+    cutoutNote: 'med udsparing',
     rotateBtn: 'Rotér plader 90°',
     optimizeBtn: 'Optimér layout', recenterBtn: 'Centrér igen', optimizing: 'Optimerer…',
     anchorCentered: 'Anker: centreret',
@@ -254,45 +268,63 @@ let zoomView = null;
 
 // -------- Polygon helpers --------
 
+// Textarea format: one vertex per line; blank lines split polygons.
+// The first polygon is the room outline, any further ones are holes
+// (columns, skylights — openings with no ceiling panels).
 function parsePolygon(text) {
-  const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-  const raw = [];
   const errors = [];
   const notes = [];
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^[(\[]?\s*(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)\s*[\])]?$/);
-    if (!m) { errors.push(t('errLine', i + 1, lines[i])); continue; }
-    const x = parseFloat(m[1]), y = parseFloat(m[2]);
-    if (!isFinite(x) || !isFinite(y) || x < -1 || y < -1 || x > 30000 || y > 30000) {
-      errors.push(t('errRange', i + 1));
-      continue;
-    }
-    raw.push({ x, y });
-  }
 
-  // Drop consecutive duplicate vertices, and a repeated closing vertex
-  // (people often re-enter the first point to "close" the polygon).
-  const poly = [];
-  for (const p of raw) {
-    const prev = poly[poly.length - 1];
-    if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < 0.5) continue;
-    poly.push(p);
-  }
-  if (poly.length >= 2) {
-    const a = poly[0], b = poly[poly.length - 1];
-    if (Math.hypot(a.x - b.x, a.y - b.y) < 0.5) poly.pop();
-  }
-  if (poly.length !== raw.length) notes.push(t('noteDupes'));
+  // Group non-empty lines into blocks, keeping original line numbers
+  // for error messages.
+  const blocks = [];
+  let cur = null;
+  text.split(/\r?\n/).forEach((line, idx) => {
+    const s = line.trim();
+    if (!s) { cur = null; return; }
+    if (!cur) { cur = []; blocks.push(cur); }
+    cur.push({ s, no: idx + 1 });
+  });
+
+  const parseBlock = lines => {
+    const raw = [];
+    for (const { s, no } of lines) {
+      const m = s.match(/^[(\[]?\s*(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)\s*[\])]?$/);
+      if (!m) { errors.push(t('errLine', no, s)); continue; }
+      const x = parseFloat(m[1]), y = parseFloat(m[2]);
+      if (!isFinite(x) || !isFinite(y) || x < -1 || y < -1 || x > 30000 || y > 30000) {
+        errors.push(t('errRange', no));
+        continue;
+      }
+      raw.push({ x, y });
+    }
+    // Drop consecutive duplicate vertices, and a repeated closing vertex
+    // (people often re-enter the first point to "close" the polygon).
+    const poly = [];
+    for (const p of raw) {
+      const prev = poly[poly.length - 1];
+      if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < 0.5) continue;
+      poly.push(p);
+    }
+    if (poly.length >= 2) {
+      const a = poly[0], b = poly[poly.length - 1];
+      if (Math.hypot(a.x - b.x, a.y - b.y) < 0.5) poly.pop();
+    }
+    if (poly.length !== raw.length) notes.push(t('noteDupes'));
+    return poly;
+  };
+
+  const polys = blocks.map(parseBlock);
+  const poly = polys.length ? polys[0] : [];
 
   if (poly.length < 3) {
     errors.push(t('errMin3'));
-    return { poly, errors, notes };
+    return { poly, holes: [], errors, notes };
   }
-
   const signed = polygonSignedArea(poly);
   if (Math.abs(signed) < 1) {
     errors.push(t('errZero'));
-    return { poly, errors, notes };
+    return { poly, holes: [], errors, notes };
   }
   // Normalize to clockwise (positive signed area with y pointing down)
   // so downstream geometry always sees one winding.
@@ -300,12 +332,42 @@ function parsePolygon(text) {
     poly.reverse();
     notes.push(t('noteReversed'));
   }
-
   const cross = findSelfIntersection(poly);
   if (cross) {
     errors.push(t('errSelf', cross[0] + 1, cross[1] + 1));
   }
-  return { poly, errors, notes };
+
+  // Holes: same validity rules, silently normalized to clockwise, and
+  // they must sit inside the room without overlapping each other.
+  const holes = [];
+  for (let i = 1; i < polys.length; i++) {
+    const h = polys[i];
+    const label = t('holeLabel', i);
+    if (h.length < 3) { errors.push(`${label}: ${t('errMin3')}`); continue; }
+    const hs = polygonSignedArea(h);
+    if (Math.abs(hs) < 1) { errors.push(`${label}: ${t('errZero')}`); continue; }
+    if (hs < 0) h.reverse();
+    const hx = findSelfIntersection(h);
+    if (hx) { errors.push(`${label}: ${t('errSelf', hx[0] + 1, hx[1] + 1)}`); continue; }
+    if (!polygonInsidePolygon(h, poly)) { errors.push(t('errHoleOutside', i)); continue; }
+    holes.push(h);
+  }
+  for (let i = 0; i < holes.length; i++) {
+    for (let j = i + 1; j < holes.length; j++) {
+      if (polygonsOverlap(holes[i], holes[j])
+          || polygonInsidePolygon(holes[i], holes[j])
+          || polygonInsidePolygon(holes[j], holes[i])) {
+        errors.push(t('errHoleOverlap', i + 1, j + 1));
+      }
+    }
+  }
+  return { poly, holes, errors, notes };
+}
+
+// Serialize room + holes back into the textarea format.
+function serializePolys(room, holes) {
+  const fmt = poly => poly.map(p => `${p.x}, ${p.y}`).join('\n');
+  return [fmt(room), ...(holes || []).map(fmt)].join('\n\n');
 }
 
 // Proper segment intersection test including collinear touching.
@@ -341,6 +403,59 @@ function findSelfIntersection(poly) {
     }
   }
   return null;
+}
+
+// -- Point/polygon proximity helpers (used for hole overlap tests,
+//    where "touching at the boundary" must NOT count as overlapping) --
+
+function distPointToSegment(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  const u = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+  return Math.hypot(p.x - (a.x + u * dx), p.y - (a.y + u * dy));
+}
+
+function distToPolygonBoundary(p, poly) {
+  let d = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    d = Math.min(d, distPointToSegment(p, poly[i], poly[(i + 1) % poly.length]));
+  }
+  return d;
+}
+
+function pointStrictlyInPolygon(p, poly, eps = 0.5) {
+  return pointInPolygon(p, poly) && distToPolygonBoundary(p, poly) > eps;
+}
+
+function pointInOrOnPolygon(p, poly, eps = 0.5) {
+  return pointInPolygon(p, poly) || distToPolygonBoundary(p, poly) <= eps;
+}
+
+// Proper crossing only — collinear overlap and shared endpoints don't count.
+function segmentsCrossProperly(p1, p2, p3, p4) {
+  const o = (a, b, c) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  const d1 = o(p3, p4, p1), d2 = o(p3, p4, p2);
+  const d3 = o(p1, p2, p3), d4 = o(p1, p2, p4);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+         ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+// True interior overlap: sharing an edge or corner is not overlap.
+function polygonsOverlap(a, b) {
+  if (a.some(v => pointStrictlyInPolygon(v, b))) return true;
+  if (b.some(v => pointStrictlyInPolygon(v, a))) return true;
+  for (let i = 0; i < a.length; i++) {
+    for (let j = 0; j < b.length; j++) {
+      if (segmentsCrossProperly(a[i], a[(i + 1) % a.length], b[j], b[(j + 1) % b.length])) return true;
+    }
+  }
+  return false;
+}
+
+// Every vertex of `inner` inside or on `outer` (boundary-tolerant, so a
+// piece exactly filling an opening counts as inside it).
+function polygonInsidePolygon(inner, outer) {
+  return inner.every(v => pointInOrOnPolygon(v, outer));
 }
 
 function polygonBBox(poly) {
@@ -475,7 +590,12 @@ function clipVerticalToPolygon(xLine, poly) {
 // centered anchor — used by the layout optimizer. The pattern repeats
 // every 1200 mm along the long axis and 600 mm across, so canonical
 // offsets stay within ±600 / ±300.
-function generatePanels(roomPoly, longAxisX, offset) {
+// `holes` (optional): pieces entirely inside an opening are dropped;
+// pieces genuinely overlapping one keep their full clipped shape (the
+// installer cuts the opening out of the piece on site — so purchase
+// counts stay honest) but are reclassified as type 'cutout' and never
+// count as full/uncut panels.
+function generatePanels(roomPoly, longAxisX, offset, holes) {
   const bbox = polygonBBox(roomPoly);
   const W = bbox.w, L = bbox.h;
   if (longAxisX === undefined) longAxisX = W >= L;
@@ -514,8 +634,14 @@ function generatePanels(roomPoly, longAxisX, offset) {
       const area = polygonArea(clipped);
       if (area < 100) continue; // < 1 cm² — slivers from corner-touching rooms
 
+      let hasHole = false;
+      if (holes && holes.length) {
+        if (holes.some(h => polygonInsidePolygon(clipped, h))) continue; // fully in an opening
+        hasHole = holes.some(h => polygonsOverlap(clipped, h));
+      }
+
       const fullArea = pw * ph;
-      const isFull   = Math.abs(area - fullArea) < 1;
+      const isFull   = Math.abs(area - fullArea) < 1 && !hasHole;
       const cbbox    = polygonBBox(clipped);
       const w = Math.round(cbbox.w);
       const h = Math.round(cbbox.h);
@@ -529,7 +655,8 @@ function generatePanels(roomPoly, longAxisX, offset) {
       const yClip = clipTop  || clipBottom;
 
       let type;
-      if (isFull)        type = 'full';
+      if (hasHole)       type = 'cutout';
+      else if (isFull)   type = 'full';
       else if (!isRect)  type = 'shaped';
       else if (xClip && yClip) type = 'corner';
       else                     type = 'edge';
@@ -538,7 +665,7 @@ function generatePanels(roomPoly, longAxisX, offset) {
         polygon: clipped,
         bbox: cbbox,
         x: cbbox.x0, y: cbbox.y0, w, h,
-        area, isFull, isRectangular: isRect,
+        area, isFull, isRectangular: isRect, hasHole,
         type,
         tooSmall: !isFull && (w < MIN_CUT_WARN || h < MIN_CUT_WARN),
         srcX: x, srcY: y, fullW: pw, fullH: ph,
@@ -565,7 +692,22 @@ function generatePanels(roomPoly, longAxisX, offset) {
 const BATTEN_SPACING = PANEL_SHORT; // 600 mm
 const PARALLEL_TOL = 0.1; // dot-product slop for "wall follows long axis"
 
-function generateBattens(roomPoly, battenWidth, longAxisX, offset) {
+// Subtract `subs` intervals from `segs` intervals (both [a, b] pairs).
+function subtractIntervals(segs, subs) {
+  let out = segs;
+  for (const [s0, s1] of subs) {
+    const next = [];
+    for (const [a, b] of out) {
+      if (s1 <= a || s0 >= b) { next.push([a, b]); continue; }
+      if (s0 > a) next.push([a, s0]);
+      if (s1 < b) next.push([s1, b]);
+    }
+    out = next;
+  }
+  return out;
+}
+
+function generateBattens(roomPoly, battenWidth, longAxisX, offset, holes) {
   const bbox = polygonBBox(roomPoly);
   const W = bbox.w, L = bbox.h;
   if (longAxisX === undefined) longAxisX = W >= L;
@@ -622,7 +764,9 @@ function generateBattens(roomPoly, battenWidth, longAxisX, offset) {
       const y = anchorY + r * BATTEN_SPACING;
       if (y < bbox.y0 - 0.5 || y > bbox.y1 + 0.5) continue;
       if (coincides(y)) continue;
-      for (const [x0, x1] of clipHorizontalToPolygon(y, roomPoly)) {
+      let segs = clipHorizontalToPolygon(y, roomPoly);
+      if (holes) for (const h of holes) segs = subtractIntervals(segs, clipHorizontalToPolygon(y, h));
+      for (const [x0, x1] of segs) {
         if (x1 - x0 < 1) continue;
         out.push({ horizontal: true, y, x0, x1, length: x1 - x0 });
       }
@@ -635,7 +779,9 @@ function generateBattens(roomPoly, battenWidth, longAxisX, offset) {
       const x = anchorX + c * BATTEN_SPACING;
       if (x < bbox.x0 - 0.5 || x > bbox.x1 + 0.5) continue;
       if (coincides(x)) continue;
-      for (const [y0, y1] of clipVerticalToPolygon(x, roomPoly)) {
+      let segs = clipVerticalToPolygon(x, roomPoly);
+      if (holes) for (const h of holes) segs = subtractIntervals(segs, clipVerticalToPolygon(x, h));
+      for (const [y0, y1] of segs) {
         if (y1 - y0 < 1) continue;
         out.push({ horizontal: false, x, y0, y1, length: y1 - y0 });
       }
@@ -703,10 +849,12 @@ function groupPanels(panels) {
   for (const p of cuts) {
     const a = Math.min(p.w, p.h);
     const b = Math.max(p.w, p.h);
-    const key = `${a}x${b}`;
+    // Pieces with an opening cutout group separately from clean pieces
+    // of the same size — they need extra work at the saw.
+    const key = `${a}x${b}${p.hasHole ? '+c' : ''}`;
     let g = groups.get(key);
     if (!g) {
-      g = { w: a, h: b, count: 0, types: new Set(), tooSmall: p.tooSmall };
+      g = { w: a, h: b, count: 0, types: new Set(), tooSmall: p.tooSmall, hasHole: !!p.hasHole };
       groups.set(key, g);
     }
     g.count++;
@@ -715,7 +863,8 @@ function groupPanels(panels) {
   }
   const cutGroups = [...groups.values()].map(g => ({
     ...g,
-    type: g.types.has('shaped') ? 'shaped'
+    type: g.types.has('cutout') ? 'cutout'
+        : g.types.has('shaped') ? 'shaped'
         : g.types.has('corner') ? 'corner'
         : 'edge',
     canPair: (g.w + g.w <= PANEL_LONG) || (g.h + g.h <= PANEL_LONG)
@@ -833,12 +982,16 @@ function estimatePurchase(fullCount, cutPieces, wastePct, allowRotate = true) {
 // source-panel space: w = across the panel's 600 mm side, h = along
 // the 1200 mm side (for longAxisX grids the layout w runs along the
 // panel's long side, so the dims swap).
+function cutGroupKey(w, h, hasHole) {
+  return `${Math.min(w, h)}x${Math.max(w, h)}${hasHole ? '+c' : ''}`;
+}
+
 function cutPiecesFromPanels(panels, longAxisX, respectDirection, letterByKey) {
   const out = [];
   for (const p of panels) {
     if (p.isFull) continue;
     const letter = letterByKey
-      ? letterByKey.get(`${Math.min(p.w, p.h)}x${Math.max(p.w, p.h)}`)
+      ? letterByKey.get(cutGroupKey(p.w, p.h, p.hasHole))
       : undefined;
     out.push(respectDirection
       ? { w: longAxisX ? p.h : p.w, h: longAxisX ? p.w : p.h, letter }
@@ -859,8 +1012,8 @@ function cutPiecesFromPanels(panels, longAxisX, respectDirection, letterByKey) {
 // distinct layout.
 const OPTIMIZE_STEP = 50; // mm search grid
 
-function scoreLayout(roomPoly, longAxisX, offset, allowRotate = true) {
-  const panels = generatePanels(roomPoly, longAxisX, offset);
+function scoreLayout(roomPoly, longAxisX, offset, allowRotate = true, holes) {
+  const panels = generatePanels(roomPoly, longAxisX, offset, holes);
   const group = groupPanels(panels);
   const pieces = cutPiecesFromPanels(panels, longAxisX, !allowRotate, null);
   const purchase = estimatePurchase(group.fullCount, pieces, 0, allowRotate);
@@ -882,13 +1035,13 @@ function layoutOffsetMag(dLong, dCross, isNaturalOrientation) {
   return Math.abs(dLong) + Math.abs(dCross) + (isNaturalOrientation ? 0 : 1);
 }
 
-function optimizeLayout(roomPoly, naturalLongAxisX, step = OPTIMIZE_STEP, allowRotate = true) {
+function optimizeLayout(roomPoly, naturalLongAxisX, step = OPTIMIZE_STEP, allowRotate = true, holes) {
   let best = null;
   for (const longAxisX of [naturalLongAxisX, !naturalLongAxisX]) {
     for (let dLong = -PANEL_LONG / 2 + step; dLong <= PANEL_LONG / 2; dLong += step) {
       for (let dCross = -PANEL_SHORT / 2 + step; dCross <= PANEL_SHORT / 2; dCross += step) {
         const offset = longAxisX ? { dx: dLong, dy: dCross } : { dx: dCross, dy: dLong };
-        const s = scoreLayout(roomPoly, longAxisX, offset, allowRotate);
+        const s = scoreLayout(roomPoly, longAxisX, offset, allowRotate, holes);
         s.longAxisX = longAxisX;
         s.offset = offset;
         s.offsetMag = layoutOffsetMag(dLong, dCross, longAxisX === naturalLongAxisX);
@@ -912,7 +1065,7 @@ function optimizeLayout(roomPoly, naturalLongAxisX, step = OPTIMIZE_STEP, allowR
 // batten direction) to the nearest batten that is still inside the cut
 // polygon; if none is reachable within SCREW_SNAP_MAX the screw keeps
 // its position and is flagged `offBatten` so the UI can warn about it.
-function placeScrews(panel, battens, battenWidth, longAxisX) {
+function placeScrews(panel, battens, battenWidth, longAxisX, holes) {
   const { x, y, w, h } = panel;
   if (w < 60 || h < 60) return [];
 
@@ -933,9 +1086,13 @@ function placeScrews(panel, battens, battenWidth, longAxisX) {
   }
   // For shaped (non-rectangular) cuts, drop screws that fall outside
   // the actual cut polygon (e.g. on the wrong side of a diagonal wall).
-  const screws = panel.isRectangular
+  let screws = panel.isRectangular
     ? candidates
     : candidates.filter(c => pointInPolygon(c, panel.polygon));
+  // Never screw into an opening — there is no material there.
+  if (holes && holes.length) {
+    screws = screws.filter(c => !holes.some(h => pointInPolygon(c, h)));
+  }
 
   if (!battens) return screws;
   return snapScrewsToBattens(screws, panel, battens, battenWidth, longAxisX);
@@ -1027,9 +1184,11 @@ const LAYER_KEYS = [
 ];
 
 function encodeStateHash(s) {
-  const { poly, errors } = parsePolygon(s.polygonText || '');
+  const { poly, holes, errors } = parsePolygon(s.polygonText || '');
   if (errors.length) return '';
-  const parts = [`p=${poly.map(pt => `${pt.x},${pt.y}`).join(';')}`];
+  const fmt = pl => pl.map(pt => `${pt.x},${pt.y}`).join(';');
+  const parts = [`p=${fmt(poly)}`];
+  for (const h of holes) parts.push(`hp=${fmt(h)}`);
   const num = (key, v) => {
     const n = parseFloat(v);
     if (isFinite(n)) parts.push(`${key}=${n}`);
@@ -1053,11 +1212,14 @@ function decodeStateHash(hash) {
   if (!raw.includes('p=')) return null;
   const s = {};
   let ox, oy;
+  const decodePoly = v => v.split(';').map(pair => pair.replace(',', ', ')).join('\n');
+  const holeTexts = [];
   for (const part of raw.split('&')) {
     const i = part.indexOf('=');
     if (i < 0) continue;
     const k = part.slice(0, i), v = part.slice(i + 1);
-    if      (k === 'p')    s.polygonText = v.split(';').map(pair => pair.replace(',', ', ')).join('\n');
+    if      (k === 'p')    s.polygonText = decodePoly(v);
+    else if (k === 'hp')   holeTexts.push(decodePoly(v));
     else if (k === 'w')    s.waste = parseFloat(v);
     else if (k === 'pp')   s.panelPrice = parseFloat(v);
     else if (k === 'sp')   s.screwPackPrice = parseFloat(v);
@@ -1070,6 +1232,7 @@ function decodeStateHash(hash) {
     else if (k === 'hide') s.hide = v;
   }
   if (!s.polygonText) return null;
+  if (holeTexts.length) s.polygonText += '\n\n' + holeTexts.join('\n\n');
   if (isFinite(ox) || isFinite(oy)) s.offset = { dx: ox || 0, dy: oy || 0 };
   // encodeStateHash omits default values, so absence means default —
   // fill them in so a shared link renders the same for every recipient
@@ -1147,6 +1310,8 @@ const THEMES = {
     offsetTick:  { stroke: '#1a1a1a', 'stroke-width': 1.5, fill: 'none' },
     offsetLabel: { 'font-family': 'sans-serif', 'font-size': 38, 'font-weight': 500, fill: '#1a1a1a' },
     batten:      { fill: '#c69f6c', 'fill-opacity': 0.45, stroke: '#8a5a2b', 'stroke-width': 1, 'stroke-opacity': 0.85 },
+    hole:        { fill: '#fafaf7', stroke: '#1a1a1a', 'stroke-width': 3, 'stroke-dasharray': '24 12' },
+    holeCross:   { stroke: '#aaa', 'stroke-width': 1.5 },
     handle:      { fill: '#ffffff', stroke: '#1a1a1a', 'stroke-width': 3 },
     handleMid:   { fill: '#ffffff', stroke: '#999', 'stroke-width': 2, opacity: 0.85 },
     roomEdgeLabel: '#1a1a1a',
@@ -1168,6 +1333,8 @@ const THEMES = {
     offsetTick:  { stroke: '#d4d4d4', 'stroke-width': 1.5, fill: 'none' },
     offsetLabel: { 'font-family': 'sans-serif', 'font-size': 38, 'font-weight': 500, fill: '#e6e6e6' },
     batten:      { fill: '#7a4a18', 'fill-opacity': 0.55, stroke: '#fb923c', 'stroke-width': 1, 'stroke-opacity': 0.9 },
+    hole:        { fill: '#161616', stroke: '#fb923c', 'stroke-width': 3, 'stroke-dasharray': '24 12' },
+    holeCross:   { stroke: '#555', 'stroke-width': 1.5 },
     handle:      { fill: '#1f1f1f', stroke: '#fb923c', 'stroke-width': 3 },
     handleMid:   { fill: '#1f1f1f', stroke: '#7c4a18', 'stroke-width': 2, opacity: 0.9 },
     roomEdgeLabel: '#f5f5f5',
@@ -1190,7 +1357,7 @@ function polygonPointsAttr(poly) {
   return poly.map(p => `${p.x},${p.y}`).join(' ');
 }
 
-function renderSVG(roomPoly, panels, battens, battenWidth, longAxisX, offset) {
+function renderSVG(roomPoly, panels, battens, battenWidth, longAxisX, offset, holes) {
   const svg = els.svg;
   while (svg.firstChild) svg.removeChild(svg.firstChild);
 
@@ -1310,29 +1477,50 @@ function renderSVG(roomPoly, panels, battens, battenWidth, longAxisX, offset) {
     }
   }
 
+  // Openings (columns, skylights): void fill + dashed outline + cross,
+  // drawn over panels/battens so the cutout area reads as "no ceiling".
+  const gHoles = el(svg, 'g', { class: 'layer-holes' });
+  for (const h of (holes || [])) {
+    el(gHoles, 'polygon', { points: polygonPointsAttr(h), ...theme.hole });
+    const hb = polygonBBox(h);
+    el(gHoles, 'line', { x1: hb.x0, y1: hb.y0, x2: hb.x1, y2: hb.y1, ...theme.holeCross });
+    el(gHoles, 'line', { x1: hb.x0, y1: hb.y1, x2: hb.x1, y2: hb.y0, ...theme.holeCross });
+  }
+  for (const h of (holes || [])) {
+    drawPolygonEdgeLabels(gDims, h, {
+      fontSize: 30, offset: 60, color: theme.roomEdgeLabel,
+      minLength: 100, outward: true, fontWeight: 600,
+    });
+  }
+
   // Room border (polygon, on top so cut edges don't bleed past it)
   el(svg, 'polygon', { points: roomPts, ...theme.roomBorder });
 
   // Edit handles (topmost): drag a corner to move it, drag an edge
   // midpoint to add a corner, double-click a corner to remove it.
+  // data-poly identifies the polygon: -1 = room, 0.. = hole index.
   // Stripped from PDF export.
   const gHandles = el(svg, 'g', { class: 'layer-handles' });
   const handleR = Math.max(50, Math.min(W, L) * 0.03);
-  for (let i = 0; i < roomPoly.length; i++) {
-    const a = roomPoly[i], b = roomPoly[(i + 1) % roomPoly.length];
-    const mid = el(gHandles, 'circle', {
-      cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, r: handleR * 0.55,
-      'data-edge': i, ...theme.handleMid,
-    });
-    el(mid, 'title', {}, t('titleEdgeMid'));
-  }
-  for (let i = 0; i < roomPoly.length; i++) {
-    const c = el(gHandles, 'circle', {
-      cx: roomPoly[i].x, cy: roomPoly[i].y, r: handleR,
-      'data-vertex': i, ...theme.handle,
-    });
-    el(c, 'title', {}, t('titleVertex'));
-  }
+  const drawHandlesFor = (poly, polyIdx, r) => {
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      const mid = el(gHandles, 'circle', {
+        cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, r: r * 0.55,
+        'data-edge': i, 'data-poly': polyIdx, ...theme.handleMid,
+      });
+      el(mid, 'title', {}, t('titleEdgeMid'));
+    }
+    for (let i = 0; i < poly.length; i++) {
+      const c = el(gHandles, 'circle', {
+        cx: poly[i].x, cy: poly[i].y, r,
+        'data-vertex': i, 'data-poly': polyIdx, ...theme.handle,
+      });
+      el(c, 'title', {}, t('titleVertex'));
+    }
+  };
+  drawHandlesFor(roomPoly, -1, handleR);
+  (holes || []).forEach((h, i) => drawHandlesFor(h, i, handleR * 0.75));
 }
 
 // Label each edge of a polygon with its length. Used for the room
@@ -1516,9 +1704,9 @@ function drawCutDiagrams(pdf, packedPanels, opts) {
 
 // -------- UI: summary, cut list, layer toggles --------
 
-function renderSummary(roomPoly, group, purchase, wastePct, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice, so) {
+function renderSummary(roomPoly, group, purchase, wastePct, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice, so, holes) {
   const bb = polygonBBox(roomPoly);
-  const m2 = polygonArea(roomPoly) / 1e6;
+  const m2 = (polygonArea(roomPoly) - (holes || []).reduce((s, h) => s + polygonArea(h), 0)) / 1e6;
   const wallName = w => w === 'left' ? t('wallLeft') : t('wallTop');
   els.summary.innerHTML = `
     <h3>${t('sumTitle')}</h3>
@@ -1566,7 +1754,7 @@ function renderCutList(group, offBattenScrews, packedPanels) {
       <td class="num">${g.count}</td>
       <td class="num">${g.w} × ${g.h}</td>
       <td><span class="badge ${g.type}">${t('type_' + g.type)}</span></td>
-      <td>${t('perPanel', g.piecesPerPanel)}${g.tooSmall ? ` · <strong>${t('cutSmallNote')}</strong>` : ''}</td>
+      <td>${t('perPanel', g.piecesPerPanel)}${g.hasHole ? ` · ${t('cutoutNote')}` : ''}${g.tooSmall ? ` · <strong>${t('cutSmallNote')}</strong>` : ''}</td>
     </tr>`;
   }
   let html = `
@@ -1605,7 +1793,7 @@ function renderAnchorStatus(extra) {
 // a timeout so the "Optimizing…" label can paint first). Applies the
 // best layout and reports what improved vs the current one.
 function runOptimize() {
-  const { polygon: roomPoly, polygonErrors } = readInputs();
+  const { polygon: roomPoly, holes, polygonErrors } = readInputs();
   if (polygonErrors.length || roomPoly.length < 3) return;
 
   const bb = polygonBBox(roomPoly);
@@ -1613,12 +1801,12 @@ function runOptimize() {
   const currentLongAxisX = panelRotated ? !naturalLongAxisX : naturalLongAxisX;
 
   const allowRotate = !els.respectDirection.checked;
-  const current = scoreLayout(roomPoly, currentLongAxisX, anchorOffset, allowRotate);
+  const current = scoreLayout(roomPoly, currentLongAxisX, anchorOffset, allowRotate, holes);
   const cur = { dLong: currentLongAxisX ? anchorOffset.dx : anchorOffset.dy,
                 dCross: currentLongAxisX ? anchorOffset.dy : anchorOffset.dx };
   current.offsetMag = layoutOffsetMag(cur.dLong, cur.dCross, currentLongAxisX === naturalLongAxisX);
 
-  const best = optimizeLayout(roomPoly, naturalLongAxisX, OPTIMIZE_STEP, allowRotate);
+  const best = optimizeLayout(roomPoly, naturalLongAxisX, OPTIMIZE_STEP, allowRotate, holes);
   if (!betterLayout(best, current)) {
     renderAnchorStatus(t('alreadyOptimal'));
     return;
@@ -1774,7 +1962,7 @@ function initState() {
 // -------- Main update --------
 
 function readInputs() {
-  const { poly, errors, notes } = parsePolygon(els.polygon.value);
+  const { poly, holes, errors, notes } = parsePolygon(els.polygon.value);
   const waste = clamp(parseFloat(els.waste.value), 0, 50);
   const panelPrice     = clamp(parseFloat(els.panelPrice.value),     0, 1e6);
   const screwPackPrice = clamp(parseFloat(els.screwPackPrice.value), 0, 1e6);
@@ -1782,6 +1970,7 @@ function readInputs() {
   const battenWidth    = clamp(parseFloat(els.battenWidth.value),   20, 500);
   return {
     polygon: poly,
+    holes: holes || [],
     polygonErrors: errors,
     polygonNotes: notes,
     waste:          isFinite(waste)          ? waste          : 0,
@@ -1809,7 +1998,7 @@ function computeCosts(purchase, screwCount, battenMeters, panelPrice, screwPackP
 
 let lastState = null;
 function update() {
-  const { polygon: roomPoly, polygonErrors, polygonNotes, waste, panelPrice, screwPackPrice, battenPrice, battenWidth } = readInputs();
+  const { polygon: roomPoly, holes, polygonErrors, polygonNotes, waste, panelPrice, screwPackPrice, battenPrice, battenWidth } = readInputs();
 
   // Status line under the polygon textarea
   if (polygonErrors.length || roomPoly.length < 3) {
@@ -1818,22 +2007,23 @@ function update() {
     return; // keep the last good drawing
   }
   const bb = polygonBBox(roomPoly);
-  const m2 = polygonArea(roomPoly) / 1e6;
+  const m2 = (polygonArea(roomPoly) - holes.reduce((s, h) => s + polygonArea(h), 0)) / 1e6;
   els.polygonStatus.className = 'polygon-status ok';
   els.polygonStatus.textContent =
     t('statusOk', roomPoly.length, Math.round(bb.w), Math.round(bb.h), m2.toFixed(2))
+    + (holes.length ? ` · ${t('statusHoles', holes.length)}` : '')
     + (polygonNotes.length ? ` · ${polygonNotes.join(' · ')}` : '');
 
   const naturalLongAxisX = bb.w >= bb.h;
   const longAxisX = panelRotated ? !naturalLongAxisX : naturalLongAxisX;
-  const panels = generatePanels(roomPoly, longAxisX, anchorOffset);
-  const battens = generateBattens(roomPoly, battenWidth, longAxisX, anchorOffset);
+  const panels = generatePanels(roomPoly, longAxisX, anchorOffset, holes);
+  const battens = generateBattens(roomPoly, battenWidth, longAxisX, anchorOffset, holes);
   const battenMeters = totalBattenLength(battens) / 1000;
-  for (const p of panels) p.screws = placeScrews(p, battens, battenWidth, longAxisX);
+  for (const p of panels) p.screws = placeScrews(p, battens, battenWidth, longAxisX, holes);
   const group  = groupPanels(panels);
-  const letterByKey = new Map(group.cutGroups.map(g => [`${g.w}x${g.h}`, g.letter]));
+  const letterByKey = new Map(group.cutGroups.map(g => [cutGroupKey(g.w, g.h, g.hasHole), g.letter]));
   for (const p of panels) {
-    if (!p.isFull) p.cutLetter = letterByKey.get(`${Math.min(p.w, p.h)}x${Math.max(p.w, p.h)}`);
+    if (!p.isFull) p.cutLetter = letterByKey.get(cutGroupKey(p.w, p.h, p.hasHole));
   }
   const respectDirection = els.respectDirection.checked;
   const cutPieces = cutPiecesFromPanels(panels, longAxisX, respectDirection, letterByKey);
@@ -1842,12 +2032,12 @@ function update() {
   const offBatten = offBattenScrewCount(panels);
   const costs = computeCosts(purchase, screwCount, battenMeters, panelPrice, screwPackPrice, battenPrice);
   const settingOut = computeSettingOut(roomPoly, longAxisX, anchorOffset);
-  renderSVG(roomPoly, panels, battens, battenWidth, longAxisX, anchorOffset);
-  renderSummary(roomPoly, group, purchase, waste, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice, settingOut);
+  renderSVG(roomPoly, panels, battens, battenWidth, longAxisX, anchorOffset, holes);
+  renderSummary(roomPoly, group, purchase, waste, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice, settingOut, holes);
   renderCutList(group, offBatten, purchase.packedPanels);
   renderAnchorStatus();
   updateLayerClasses();
-  lastState = { roomPoly, waste, panels, battens, battenMeters, battenWidth, group, purchase, screwCount, offBatten, costs, panelPrice, screwPackPrice, battenPrice, settingOut };
+  lastState = { roomPoly, holes, waste, panels, battens, battenMeters, battenWidth, group, purchase, screwCount, offBatten, costs, panelPrice, screwPackPrice, battenPrice, settingOut };
   saveState();
 }
 
@@ -1948,8 +2138,8 @@ if (isBrowser) {
     return pt.matrixTransform(ctm.inverse());
   }
 
-  function writePolyToTextarea(poly) {
-    els.polygon.value = poly.map(p => `${p.x}, ${p.y}`).join('\n');
+  function writePolysToTextarea(room, holes) {
+    els.polygon.value = serializePolys(room, holes);
   }
 
   function currentView() {
@@ -2039,24 +2229,28 @@ if (isBrowser) {
       panState = { view: currentView(), start: { x: e.clientX, y: e.clientY } };
       return;
     }
-    // Work on the polygon that produced the current rendering — it is
-    // already normalized, so handle indices match and parsePolygon
-    // won't reverse it mid-drag.
-    const poly = lastState.roomPoly.map(p => ({ x: p.x, y: p.y }));
+    // Work on the polygons that produced the current rendering — they
+    // are already normalized, so handle indices match and parsePolygon
+    // won't reverse them mid-drag. data-poly: -1 room, 0.. hole index.
+    const polyIdx = t.dataset.poly !== undefined ? +t.dataset.poly : -1;
+    const room = lastState.roomPoly.map(p => ({ x: p.x, y: p.y }));
+    const holesC = (lastState.holes || []).map(h => h.map(p => ({ x: p.x, y: p.y })));
+    const target = polyIdx < 0 ? room : holesC[polyIdx];
+    if (!target) return;
     let index;
     if (isVertex) {
       index = +t.dataset.vertex;
     } else {
       const i = +t.dataset.edge;
-      const a = poly[i], b = poly[(i + 1) % poly.length];
+      const a = target[i], b = target[(i + 1) % target.length];
       index = i + 1;
-      poly.splice(index, 0, { x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2) });
+      target.splice(index, 0, { x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2) });
     }
     pushHistory(); // one undo step per drag gesture
-    vertexDrag = { poly, index };
+    vertexDrag = { room, holes: holesC, target, index };
     anchorOffset = { dx: 0, dy: 0 }; // the shape is changing
     if (isEdge) {
-      writePolyToTextarea(poly);
+      writePolysToTextarea(room, holesC);
       update();
     }
   });
@@ -2069,8 +2263,8 @@ if (isBrowser) {
     if (vertexDrag) {
       const p = svgEventPoint(e);
       if (!p) return;
-      vertexDrag.poly[vertexDrag.index] = snapVertex(vertexDrag.poly, vertexDrag.index, p.x, p.y);
-      writePolyToTextarea(vertexDrag.poly);
+      vertexDrag.target[vertexDrag.index] = snapVertex(vertexDrag.target, vertexDrag.index, p.x, p.y);
+      writePolysToTextarea(vertexDrag.room, vertexDrag.holes);
       if (!dragFrame) dragFrame = requestAnimationFrame(() => { dragFrame = 0; update(); });
       return;
     }
@@ -2118,12 +2312,15 @@ if (isBrowser) {
   els.svg.addEventListener('dblclick', e => {
     const t = e.target;
     if (!t.dataset || t.dataset.vertex === undefined || !lastState) return;
-    const poly = lastState.roomPoly.map(p => ({ x: p.x, y: p.y }));
-    if (poly.length <= 3) return;
+    const polyIdx = t.dataset.poly !== undefined ? +t.dataset.poly : -1;
+    const room = lastState.roomPoly.map(p => ({ x: p.x, y: p.y }));
+    const holesC = (lastState.holes || []).map(h => h.map(p => ({ x: p.x, y: p.y })));
+    const target = polyIdx < 0 ? room : holesC[polyIdx];
+    if (!target || target.length <= 3) return;
     pushHistory();
-    poly.splice(+t.dataset.vertex, 1);
+    target.splice(+t.dataset.vertex, 1);
     anchorOffset = { dx: 0, dy: 0 };
-    writePolyToTextarea(poly);
+    writePolysToTextarea(room, holesC);
     update();
   });
 
@@ -2192,6 +2389,14 @@ const TEMPLATES = [
   { name: 'Stue',         nameEn: 'Living room',    polygon: [{x:800,y:0},{x:4200,y:0},{x:5000,y:800},{x:5000,y:3700},{x:4200,y:4500},{x:800,y:4500},{x:0,y:3700},{x:0,y:800}] },
   // T-shape.
   { name: 'Kontor',       nameEn: 'Office',         polygon: [{x:0,y:0},{x:3500,y:0},{x:3500,y:1500},{x:2500,y:1500},{x:2500,y:3500},{x:1000,y:3500},{x:1000,y:1500},{x:0,y:1500}] },
+  // Rectangle with a free-standing column (small hole mid-room).
+  { name: 'Rum m. søjle', nameEn: 'Room w. column',
+    polygon: [{x:0,y:0},{x:4200,y:0},{x:4200,y:4800},{x:0,y:4800}],
+    holes: [[{x:1800,y:2100},{x:2100,y:2100},{x:2100,y:2400},{x:1800,y:2400}]] },
+  // Rectangle with a large skylight opening.
+  { name: 'Stue m. ovenlys', nameEn: 'Skylight room',
+    polygon: [{x:0,y:0},{x:5400,y:0},{x:5400,y:4200},{x:0,y:4200}],
+    holes: [[{x:2100,y:1600},{x:3300,y:1600},{x:3300,y:2600},{x:2100,y:2600}]] },
 ];
 
 function templateName(tpl) {
@@ -2203,8 +2408,12 @@ function templatePreviewHTML(template) {
   const pad = Math.max(bb.w, bb.h) * 0.08;
   const points = template.polygon.map(p => `${p.x},${p.y}`).join(' ');
   const stroke = Math.max(bb.w, bb.h) / 55;
+  const holePolys = (template.holes || []).map(h =>
+    `<polygon points="${h.map(p => `${p.x},${p.y}`).join(' ')}" fill="#fdfbf3" stroke="#b08a3a" stroke-width="${stroke * 0.7}" stroke-dasharray="${stroke * 2} ${stroke * 1.4}" stroke-linejoin="round"/>`
+  ).join('');
   return `<svg viewBox="${bb.x0 - pad} ${bb.y0 - pad} ${bb.w + 2 * pad} ${bb.h + 2 * pad}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
     <polygon points="${points}" fill="#fef3c7" stroke="#b08a3a" stroke-width="${stroke}" stroke-linejoin="round"/>
+    ${holePolys}
   </svg>`;
 }
 
@@ -2212,7 +2421,8 @@ function renderTemplates() {
   const container = document.getElementById('templates');
   if (!container) return;
   container.innerHTML = TEMPLATES.map((tpl, i) => {
-    const area = (polygonArea(tpl.polygon) / 1e6).toFixed(2);
+    const holeArea = (tpl.holes || []).reduce((s, h) => s + polygonArea(h), 0);
+    const area = ((polygonArea(tpl.polygon) - holeArea) / 1e6).toFixed(2);
     const name = templateName(tpl);
     return `<button class="template-card" type="button" data-template="${i}" title="${name} — ${area} m²">
       <div class="template-preview">${templatePreviewHTML(tpl)}</div>
@@ -2232,7 +2442,7 @@ function renderTemplates() {
 
 function applyTemplate(template, card) {
   pushHistory();
-  els.polygon.value = template.polygon.map(p => `${p.x}, ${p.y}`).join('\n');
+  els.polygon.value = serializePolys(template.polygon, template.holes || []);
   anchorOffset = { dx: 0, dy: 0 };
   zoomView = null;
   if (card) {
@@ -2283,7 +2493,7 @@ async function exportPDF() {
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
-    const { roomPoly, waste, group, purchase, screwCount, offBatten, battenMeters, costs, panelPrice, screwPackPrice, battenPrice, settingOut } = lastState;
+    const { roomPoly, holes, waste, group, purchase, screwCount, offBatten, battenMeters, costs, panelPrice, screwPackPrice, battenPrice, settingOut } = lastState;
     const bb = polygonBBox(roomPoly);
     const W = Math.round(bb.w), L = Math.round(bb.h);
 
@@ -2336,7 +2546,7 @@ async function exportPDF() {
     pdf.setFont('helvetica', 'bold'); pdf.setFontSize(11);
     pdf.text(t('sumTitle'), margin, y); y += 6;
     pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10);
-    const m2 = polygonArea(roomPoly) / 1e6;
+    const m2 = (polygonArea(roomPoly) - (holes || []).reduce((s, h) => s + polygonArea(h), 0)) / 1e6;
     const wallName = w => w === 'left' ? t('wallLeft') : t('wallTop');
     const lines = [
       t('pdfArea', m2.toFixed(2)),
@@ -2433,7 +2643,9 @@ async function exportPDF() {
 
     drawRow(['—', String(group.fullCount), '600 × 1200', t('type_full'), '—']);
     for (const g of group.cutGroups) {
-      const note = t('perPanel', g.piecesPerPanel) + (g.tooSmall ? `  (${t('cutSmallNote')})` : '');
+      const note = t('perPanel', g.piecesPerPanel)
+        + (g.hasHole ? `, ${t('cutoutNote')}` : '')
+        + (g.tooSmall ? `  (${t('cutSmallNote')})` : '');
       drawRow([g.letter, String(g.count), `${g.w} × ${g.h}`, t('type_' + g.type), note], { warn: g.tooSmall });
     }
 
@@ -2461,8 +2673,9 @@ async function exportPDF() {
 
 const __api = {
   STRINGS, t,
-  parsePolygon, polygonBBox, polygonArea, polygonSignedArea, polygonCentroid,
+  parsePolygon, serializePolys, polygonBBox, polygonArea, polygonSignedArea, polygonCentroid,
   pointInPolygon, clipPolygonByRect, findSelfIntersection, segmentsIntersect,
+  polygonsOverlap, polygonInsidePolygon, pointStrictlyInPolygon, subtractIntervals,
   generatePanels, generateBattens, totalBattenLength, computeSettingOut,
   groupPanels, piecesPerPanel, groupLetter, estimatePurchase, packCutPieces,
   cutPiecesFromPanels, drawCutDiagrams,

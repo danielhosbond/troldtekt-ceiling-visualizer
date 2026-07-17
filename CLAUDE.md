@@ -26,12 +26,21 @@ Built for hosting on GitHub Pages.
 
 All logic lives in `app.js`.
 
-1. **Room model**: an arbitrary polygon (any number of vertices, any angles
-   including diagonals). The user enters vertices as "x, y" lines in the
-   textarea. `parsePolygon` validates them: drops duplicate/closing
-   vertices, rejects zero-area and self-intersecting polygons
-   (`findSelfIntersection`, O(n²) segment test), and normalizes
-   counter-clockwise input to clockwise (positive shoelace with y-down).
+1. **Room model**: an arbitrary polygon plus optional hole polygons
+   (columns, skylights), entered as "x, y" lines with blank lines
+   separating polygons — first block is the room, the rest are holes.
+   `parsePolygon` returns `{ poly, holes, errors, notes }`: drops
+   duplicate/closing vertices, rejects zero-area and self-intersecting
+   polygons (`findSelfIntersection`, O(n²)), normalizes all windings to
+   clockwise, and requires holes to sit inside the room without
+   overlapping each other (`polygonsOverlap` uses strict-interior tests
+   so boundary-touching is fine). `serializePolys` writes the format
+   back. Hole semantics downstream: pieces fully inside an opening are
+   dropped by `generatePanels`; genuinely overlapping pieces keep their
+   full clipped shape but become type `'cutout'` (never full/uncut,
+   grouped separately via `cutGroupKey`); battens subtract hole
+   crossings (`subtractIntervals`); screws are filtered out of holes;
+   areas are net of holes; share URLs carry `hp=` blocks.
 2. `generatePanels(roomPoly, longAxisX, offset)` — pure function. Tiles
    600×1200 panels in halv forbandt across the polygon's bounding box,
    anchored on the bbox center (falls back to the polygon centroid if

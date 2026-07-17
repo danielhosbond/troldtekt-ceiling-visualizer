@@ -14,6 +14,17 @@ No build step. Hostable as static files on GitHub Pages.
   validated: self-intersecting or zero-area polygons are rejected with
   a message, duplicate/closing vertices are dropped, and
   counter-clockwise input is automatically reversed to clockwise.
+- **Openings (columns, skylights)** — add hole polygons after the room
+  outline, separated by blank lines. Holes are validated (inside the
+  room, not overlapping each other) and affect everything: panels fully
+  inside an opening are dropped; panels partially overlapping one keep
+  their full shape (you cut the opening out on site, so purchase counts
+  stay honest) but become lettered "cutout" pieces in the cut list;
+  battens skip openings; screws never land in one; the ceiling area is
+  net of openings. Openings draw as dashed voids with a cross, have
+  their own drag handles, and travel in share URLs (`hp=` blocks).
+  Two templates ship with holes: a room with a column and a skylight
+  room.
 - **Interactive editing in the drawing** — drag a corner handle to move
   it (positions snap to a 10 mm grid, and to a neighbour's x/y within
   60 mm so walls stay straight), drag an edge midpoint to add a corner,
@@ -139,6 +150,20 @@ For an L-shape:
 5000, 1500
 5000, 4000
 0, 4000
+```
+
+For a room with a column opening, add the hole after a blank line:
+
+```
+0, 0
+4200, 0
+4200, 4800
+0, 4800
+
+1800, 2100
+2100, 2100
+2100, 2400
+1800, 2400
 ```
 
 The status line under the textarea reports vertex count, bounding box

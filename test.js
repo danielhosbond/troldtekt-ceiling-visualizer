@@ -344,6 +344,80 @@ screwChecks('L-shape', LSHAPE);
         'setting out: sub-grid room reports no chalk lines');
 }
 
+// ---- rooms with holes (columns / skylights) ----
+{
+  // Blank line separates the room outline from hole polygons.
+  const r = T.parsePolygon('0, 0\n3600, 0\n3600, 4800\n0, 4800\n\n1500, 2100\n2100, 2100\n2100, 2700\n1500, 2700');
+  check(r.errors.length === 0, 'holes: blank-line hole parses cleanly');
+  check(r.holes.length === 1 && r.holes[0].length === 4, 'holes: hole polygon extracted');
+  check(shoelace(r.holes[0]) > 0, 'holes: hole winding normalized to clockwise');
+
+  const out = T.parsePolygon('0, 0\n3600, 0\n3600, 4800\n0, 4800\n\n3000, 2000\n4200, 2000\n4200, 2600\n3000, 2600');
+  check(out.errors.some(e => /outside the room/.test(e)), 'holes: hole outside the room rejected');
+
+  const overlap = T.parsePolygon('0, 0\n3600, 0\n3600, 4800\n0, 4800\n\n1000, 1000\n2000, 1000\n2000, 2000\n1000, 2000\n\n1500, 1500\n2500, 1500\n2500, 2500\n1500, 2500');
+  check(overlap.errors.some(e => /overlap/.test(e)), 'holes: overlapping holes rejected');
+
+  check(T.serializePolys(r.poly, r.holes).includes('\n\n1500, 2100'),
+        'holes: serializePolys round-trips the blank-line format');
+}
+{
+  // A hole exactly covering one panel removes that panel; neighbours
+  // that only share its boundary stay clean pieces.
+  const base = T.generatePanels(RECT, false);
+  const holePanel = [{ x: 1500, y: 1800 }, { x: 2100, y: 1800 }, { x: 2100, y: 3000 }, { x: 1500, y: 3000 }];
+  const panels = T.generatePanels(RECT, false, undefined, [holePanel]);
+  check(panels.length === base.length - 1, 'holes: panel fully inside an opening is dropped');
+  const covered = panels.reduce((s, p) => s + p.area, 0);
+  check(approx(covered, T.polygonArea(RECT) - 720000, 1), 'holes: coverage excludes the opening');
+  check(panels.every(p => !p.hasHole), 'holes: boundary-touching neighbours are not flagged');
+}
+{
+  // A small column inside a full panel: the piece keeps its full shape
+  // (installer cuts the hole) but becomes a lettered "cutout" piece.
+  const column = [{ x: 1650, y: 2250 }, { x: 1950, y: 2250 }, { x: 1950, y: 2550 }, { x: 1650, y: 2550 }];
+  const base = T.generatePanels(RECT, false);
+  const panels = T.generatePanels(RECT, false, undefined, [column]);
+  check(panels.length === base.length, 'holes: column keeps the piece count');
+  const flagged = panels.filter(p => p.hasHole);
+  check(flagged.length === 1 && flagged[0].type === 'cutout' && !flagged[0].isFull,
+        'holes: overlapped panel becomes a cutout piece');
+  check(approx(panels.reduce((s, p) => s + p.area, 0), T.polygonArea(RECT), 1),
+        'holes: cutout pieces keep their full purchase area');
+  const g = T.groupPanels(panels);
+  const cutoutGroup = g.cutGroups.find(x => x.hasHole);
+  check(cutoutGroup && cutoutGroup.type === 'cutout' && cutoutGroup.letter,
+        'holes: cutout pieces group separately with a letter');
+  check(g.fullCount === base.filter(p => p.isFull).length - 1,
+        'holes: cutout piece no longer counts as full/uncut');
+}
+{
+  // Battens skip openings: a hole spanning x 1350–1950, y 2000–2600
+  // crosses only the interior batten at x = 1500 → 600 mm shorter.
+  const hole = [{ x: 1350, y: 2000 }, { x: 1950, y: 2000 }, { x: 1950, y: 2600 }, { x: 1350, y: 2600 }];
+  const battens = T.generateBattens(RECT, 95, false, undefined, [hole]);
+  check(approx(T.totalBattenLength(battens), 38400 - 600, 1), 'holes: batten length subtracts the opening');
+
+  // Screws never land inside an opening.
+  const panels = T.generatePanels(RECT, false, undefined, [hole]);
+  let inHole = 0, total = 0;
+  for (const p of panels) {
+    for (const s of T.placeScrews(p, battens, 95, false, [hole])) {
+      total++;
+      if (T.pointInPolygon(s, hole)) inHole++;
+    }
+  }
+  check(total > 0 && inHole === 0, 'holes: no screw inside the opening');
+}
+{
+  // Share-URL round-trip including holes.
+  const state = { polygonText: '0, 0\n3600, 0\n3600, 4800\n0, 4800\n\n1500, 2100\n2100, 2100\n2100, 2700\n1500, 2700' };
+  const hash = T.encodeStateHash(state);
+  check(hash.includes('hp=1500,2100;2100,2100;2100,2700;1500,2700'), 'holes: hash carries hp= blocks');
+  const back = T.decodeStateHash(hash);
+  check(back.polygonText === state.polygonText, 'holes: hash round-trips the hole text');
+}
+
 // ---- i18n string table ----
 {
   const en = Object.keys(T.STRINGS.en).sort();

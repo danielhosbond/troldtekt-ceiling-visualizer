@@ -261,6 +261,7 @@ svg#drawing { touch-action: none; }
 .cut-list .badge.edge { background: #fff4d6; color: #6e4f0d; }
 .cut-list .badge.corner { background: #ffe1c4; color: #7a3a09; }
 .cut-list .badge.shaped { background: #dbeafe; color: #1e40af; }
+.cut-list .badge.cutout { background: #fce7f3; color: #9d174d; }
 
 .warn-banner {
   color: #991b1b; font-size: 0.82rem; padding: 0.55rem 0.75rem;
@@ -383,6 +384,7 @@ body.dark .legend span:nth-child(3) .sw { background: #4a1414; border-color: #ef
 body.dark .legend span:nth-child(4) .sw { background: #fb923c; }
 body.dark .legend span:nth-child(5) .sw { background: #ef4444; }
 body.dark .legend span:nth-child(6) .sw { background: #7a4a18; border-color: #fb923c !important; }
+body.dark .legend span:nth-child(7) .sw { background: #161616; border-color: #fb923c !important; }
 
 body.dark .cut-list h2 { color: #b0b0b0; }
 body.dark .cut-list table {
@@ -403,6 +405,7 @@ body.dark .cut-list .badge.full   { background: #2a2a2a; color: #c8c8c8; }
 body.dark .cut-list .badge.edge   { background: #3a2410; color: #fdba74; }
 body.dark .cut-list .badge.corner { background: #4a2410; color: #fed7aa; }
 body.dark .cut-list .badge.shaped { background: #1e2e4a; color: #93c5fd; }
+body.dark .cut-list .badge.cutout { background: #4a1a33; color: #f9a8d4; }
 
 body.dark .warn-banner {
   color: #fca5a5;
