@@ -71,6 +71,11 @@ No build step. Hostable as static files on GitHub Pages.
 - **Live SVG drawing** with toggleable layers: room dimensions, full
   panel labels (sequence numbers), cut measurements, screw positions,
   and wooden battens.
+- **Zoom and pan** — +/−/Fit buttons on the drawing, Ctrl/Cmd+scroll
+  (trackpad pinch works the same way), touch pinch, and drag on empty
+  space to pan. Plain scrolling still scrolls the page. Zoom is
+  view-only state: PDF export and printing always show the whole room,
+  and entering a new room resets to fit.
 - **Light / dark theme** — toggle in the top-right of the header
   (persisted in `localStorage`, defaults to `prefers-color-scheme`).
   Dark palette uses dark-grey surfaces with orange accents; PDF export

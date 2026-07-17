@@ -29,6 +29,9 @@ const els = !isBrowser ? null : {
   showBattens: document.getElementById('show-battens'),
   showHandles: document.getElementById('show-handles'),
   copyLink: document.getElementById('copy-link'),
+  zoomIn:  document.getElementById('zoom-in'),
+  zoomOut: document.getElementById('zoom-out'),
+  zoomFit: document.getElementById('zoom-fit'),
   svg:      document.getElementById('drawing'),
   summary:  document.getElementById('summary'),
   cutList:  document.getElementById('cut-list'),
@@ -49,6 +52,11 @@ let panelRotated = isBrowser && localStorage.getItem('troldtekt-rotated') === 't
 // (or reset to centered). Not persisted: it is tuned to one polygon and
 // orientation, so editing the polygon or rotating panels resets it.
 let anchorOffset = { dx: 0, dy: 0 };
+
+// Current drawing viewBox when the user has zoomed/panned; null means
+// fit-to-room (the default, which follows room changes). Transient —
+// not persisted or shared.
+let zoomView = null;
 
 // -------- Polygon helpers --------
 
@@ -842,6 +850,32 @@ function snapVertex(poly, index, x, y) {
   };
 }
 
+// -------- Drawing view (zoom / pan) --------
+
+const VIEW_PAD = 900;      // mm of breathing room around the room at fit
+const VIEW_MIN_W = 250;    // mm — deepest zoom-in
+const VIEW_MAX_FACTOR = 3; // zoom-out limit as a multiple of the fit width
+
+function fitViewBox(roomPoly) {
+  const bbox = polygonBBox(roomPoly);
+  return {
+    x: bbox.x0 - VIEW_PAD, y: bbox.y0 - VIEW_PAD,
+    w: bbox.w + 2 * VIEW_PAD, h: bbox.h + 2 * VIEW_PAD,
+  };
+}
+
+// Zoom a viewBox by `factor` (> 1 zooms in) around model point
+// (cx, cy) — that point stays put on screen. Width is clamped to
+// [minW, maxW]; aspect is preserved.
+function zoomViewBox(view, factor, cx, cy, minW, maxW) {
+  const w = Math.max(minW, Math.min(maxW, view.w / factor));
+  const s = w / view.w;
+  const h = view.h * s;
+  if (cx === undefined) cx = view.x + view.w / 2;
+  if (cy === undefined) cy = view.y + view.h / 2;
+  return { x: cx - (cx - view.x) * s, y: cy - (cy - view.y) * s, w, h };
+}
+
 // -------- SVG renderer --------
 
 // SVG presentation attributes are applied directly (not via stylesheet)
@@ -914,8 +948,8 @@ function renderSVG(roomPoly, panels, battens, battenWidth, longAxisX, offset) {
   const bbox = polygonBBox(roomPoly);
   const W = bbox.w, L = bbox.h;
   if (longAxisX === undefined) longAxisX = W >= L;
-  const pad = 900;
-  svg.setAttribute('viewBox', `${bbox.x0 - pad} ${bbox.y0 - pad} ${W + 2 * pad} ${L + 2 * pad}`);
+  const vb = zoomView || fitViewBox(roomPoly);
+  svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
   svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
 
   // Clip path so panel grid never leaks past polygon walls visually
@@ -1445,9 +1479,13 @@ function update() {
 }
 
 if (isBrowser) {
-  // A new room shape invalidates a tuned anchor offset — reset it.
+  // A new room shape invalidates a tuned anchor offset — reset it, and
+  // fit the view (typing a different room while zoomed into the old one
+  // would show a blank area). Handle drags bypass this: they write the
+  // textarea programmatically, so no input event fires and zoom holds.
   els.polygon.addEventListener('input', () => {
     anchorOffset = { dx: 0, dy: 0 };
+    zoomView = null;
     update();
   });
   [els.waste, els.panelPrice, els.screwPackPrice, els.battenPrice, els.battenWidth].forEach(i => i.addEventListener('input', update));
@@ -1497,14 +1535,18 @@ if (isBrowser) {
     update();
   });
 
-  // ---- Vertex editing on the SVG ----
-  // pointerdown on a handle starts a drag (capture goes to the SVG root
-  // because update() re-creates the handle elements every frame);
-  // pointerdown on an edge midpoint inserts a vertex and drags it.
-  // The textarea stays the source of truth: every move writes it and
-  // re-renders via rAF-throttled update().
-  let vertexDrag = null; // { poly, index }
+  // ---- Vertex editing, panning, and zooming on the SVG ----
+  // pointerdown on a handle starts a vertex drag (capture goes to the
+  // SVG root because update() re-creates the handle elements every
+  // frame); pointerdown anywhere else pans; a second pointer pinches.
+  // The textarea stays the source of truth for shape edits: every move
+  // writes it and re-renders via rAF-throttled update(). Zoom/pan only
+  // rewrite the viewBox attribute — no re-render needed.
+  let vertexDrag = null;  // { poly, index }
   let dragFrame = 0;
+  let panState = null;    // { view, start: {x, y} }  (screen px)
+  let pinchState = null;  // { view, dist, midModel }
+  const activePointers = new Map(); // pointerId -> { x, y } screen px
 
   function svgEventPoint(evt) {
     const ctm = els.svg.getScreenCTM();
@@ -1519,12 +1561,93 @@ if (isBrowser) {
     els.polygon.value = poly.map(p => `${p.x}, ${p.y}`).join('\n');
   }
 
+  function currentView() {
+    return zoomView || fitViewBox(lastState.roomPoly);
+  }
+
+  function applyView() {
+    if (!lastState) return;
+    const vb = currentView();
+    els.svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+  }
+
+  function zoomBy(factor, cx, cy) {
+    if (!lastState) return;
+    const fit = fitViewBox(lastState.roomPoly);
+    zoomView = zoomViewBox(currentView(), factor, cx, cy, VIEW_MIN_W, fit.w * VIEW_MAX_FACTOR);
+    applyView();
+  }
+
+  // Maps a screen point to model coords for a given viewBox, honouring
+  // preserveAspectRatio="xMidYMid meet" letterboxing. Used for pan and
+  // pinch, which anchor to the gesture's *starting* view (the live CTM
+  // changes as we mutate the viewBox mid-gesture).
+  function screenToModel(px, py, view, rect) {
+    const scale = Math.min(rect.width / view.w, rect.height / view.h);
+    const offX = (rect.width - view.w * scale) / 2;
+    const offY = (rect.height - view.h * scale) / 2;
+    return {
+      x: view.x + (px - rect.left - offX) / scale,
+      y: view.y + (py - rect.top - offY) / scale,
+    };
+  }
+
+  function startPinch() {
+    const pts = [...activePointers.values()];
+    const rect = els.svg.getBoundingClientRect();
+    const view = currentView();
+    pinchState = {
+      view,
+      dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1,
+      midModel: screenToModel((pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2, view, rect),
+    };
+  }
+
+  function doPinch() {
+    const pts = [...activePointers.values()].slice(0, 2);
+    const rect = els.svg.getBoundingClientRect();
+    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+    const fit = fitViewBox(lastState.roomPoly);
+    const start = pinchState.view;
+    const w = Math.max(VIEW_MIN_W, Math.min(fit.w * VIEW_MAX_FACTOR, start.w * pinchState.dist / dist));
+    const h = start.h * (w / start.w);
+    const midX = (pts[0].x + pts[1].x) / 2;
+    const midY = (pts[0].y + pts[1].y) / 2;
+    const scale = Math.min(rect.width / w, rect.height / h);
+    const offX = (rect.width - w * scale) / 2;
+    const offY = (rect.height - h * scale) / 2;
+    zoomView = {
+      x: pinchState.midModel.x - (midX - rect.left - offX) / scale,
+      y: pinchState.midModel.y - (midY - rect.top - offY) / scale,
+      w, h,
+    };
+    applyView();
+  }
+
   els.svg.addEventListener('pointerdown', e => {
+    if (!lastState) return;
+    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try { els.svg.setPointerCapture(e.pointerId); } catch (err) { /* synthetic events */ }
+
+    // Second finger: switch to pinch-zoom (unless mid vertex-drag —
+    // finishing the shape edit matters more than zooming).
+    if (activePointers.size === 2 && !vertexDrag) {
+      panState = null;
+      startPinch();
+      e.preventDefault();
+      return;
+    }
+    if (activePointers.size !== 1) return;
+
     const t = e.target;
     const isVertex = t.dataset && t.dataset.vertex !== undefined;
     const isEdge   = t.dataset && t.dataset.edge   !== undefined;
-    if ((!isVertex && !isEdge) || !lastState) return;
     e.preventDefault();
+    if (!isVertex && !isEdge) {
+      // Background: pan the view.
+      panState = { view: currentView(), start: { x: e.clientX, y: e.clientY } };
+      return;
+    }
     // Work on the polygon that produced the current rendering — it is
     // already normalized, so handle indices match and parsePolygon
     // won't reverse it mid-drag.
@@ -1540,7 +1663,6 @@ if (isBrowser) {
     }
     vertexDrag = { poly, index };
     anchorOffset = { dx: 0, dy: 0 }; // the shape is changing
-    try { els.svg.setPointerCapture(e.pointerId); } catch (err) { /* synthetic events */ }
     if (isEdge) {
       writePolyToTextarea(poly);
       update();
@@ -1548,22 +1670,58 @@ if (isBrowser) {
   });
 
   els.svg.addEventListener('pointermove', e => {
-    if (!vertexDrag) return;
-    const p = svgEventPoint(e);
-    if (!p) return;
-    vertexDrag.poly[vertexDrag.index] = snapVertex(vertexDrag.poly, vertexDrag.index, p.x, p.y);
-    writePolyToTextarea(vertexDrag.poly);
-    if (!dragFrame) dragFrame = requestAnimationFrame(() => { dragFrame = 0; update(); });
+    if (activePointers.has(e.pointerId)) {
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+    if (pinchState && activePointers.size >= 2) { doPinch(); return; }
+    if (vertexDrag) {
+      const p = svgEventPoint(e);
+      if (!p) return;
+      vertexDrag.poly[vertexDrag.index] = snapVertex(vertexDrag.poly, vertexDrag.index, p.x, p.y);
+      writePolyToTextarea(vertexDrag.poly);
+      if (!dragFrame) dragFrame = requestAnimationFrame(() => { dragFrame = 0; update(); });
+      return;
+    }
+    if (panState) {
+      const view = panState.view;
+      const rect = els.svg.getBoundingClientRect();
+      const scale = Math.min(rect.width / view.w, rect.height / view.h);
+      zoomView = {
+        x: view.x - (e.clientX - panState.start.x) / scale,
+        y: view.y - (e.clientY - panState.start.y) / scale,
+        w: view.w, h: view.h,
+      };
+      applyView();
+    }
   });
 
-  const endDrag = () => {
-    if (!vertexDrag) return;
-    vertexDrag = null;
-    if (dragFrame) { cancelAnimationFrame(dragFrame); dragFrame = 0; }
-    update();
+  const endPointer = e => {
+    activePointers.delete(e.pointerId);
+    if (pinchState && activePointers.size < 2) pinchState = null;
+    if (panState && activePointers.size === 0) panState = null;
+    if (vertexDrag) {
+      vertexDrag = null;
+      if (dragFrame) { cancelAnimationFrame(dragFrame); dragFrame = 0; }
+      update();
+    }
   };
-  els.svg.addEventListener('pointerup', endDrag);
-  els.svg.addEventListener('pointercancel', endDrag);
+  els.svg.addEventListener('pointerup', endPointer);
+  els.svg.addEventListener('pointercancel', endPointer);
+
+  // Ctrl/Cmd + scroll zooms at the cursor (trackpad pinches arrive as
+  // ctrl+wheel, so they work too). Plain scrolling keeps scrolling the
+  // page — the drawing is big and sits in the scroll path.
+  els.svg.addEventListener('wheel', e => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    const p = svgEventPoint(e);
+    if (!p) return;
+    zoomBy(Math.exp(-e.deltaY * 0.002), p.x, p.y);
+  }, { passive: false });
+
+  els.zoomIn.addEventListener('click', () => zoomBy(1.4));
+  els.zoomOut.addEventListener('click', () => zoomBy(1 / 1.4));
+  els.zoomFit.addEventListener('click', () => { zoomView = null; applyView(); });
 
   els.svg.addEventListener('dblclick', e => {
     const t = e.target;
@@ -1577,16 +1735,23 @@ if (isBrowser) {
   });
 
   // Printing happens on white paper — swap the SVG to the light
-  // palette for the duration of the print, mirroring PDF export.
-  // (style.css @media print handles the page chrome.)
+  // palette and fit the whole room for the duration of the print,
+  // mirroring PDF export. (style.css @media print handles the chrome.)
   let printWasDark = false;
+  let printZoomView = null;
   window.addEventListener('beforeprint', () => {
     printWasDark = document.body.classList.contains('dark');
-    if (printWasDark) { theme = THEMES.light; update(); }
+    printZoomView = zoomView;
+    zoomView = null;
+    if (printWasDark) theme = THEMES.light;
+    update();
   });
   window.addEventListener('afterprint', () => {
-    if (printWasDark) { theme = THEMES.dark; update(); }
+    if (printWasDark) theme = THEMES.dark;
+    zoomView = printZoomView;
     printWasDark = false;
+    printZoomView = null;
+    update();
   });
 }
 
@@ -1668,6 +1833,7 @@ function renderTemplates() {
 function applyTemplate(template, card) {
   els.polygon.value = template.polygon.map(p => `${p.x}, ${p.y}`).join('\n');
   anchorOffset = { dx: 0, dy: 0 };
+  zoomView = null;
   if (card) {
     document.querySelectorAll('.template-card.active').forEach(c => c.classList.remove('active'));
     card.classList.add('active');
@@ -1711,6 +1877,9 @@ async function exportPDF() {
     clone.classList.remove('no-dims', 'no-labels', 'no-cuts', 'no-screws', 'no-battens');
     const handleLayer = clone.querySelector('.layer-handles');
     if (handleLayer) handleLayer.remove(); // edit handles are screen-only
+    // The live SVG may be zoomed/panned — the PDF always shows the room.
+    const fit = fitViewBox(roomPoly);
+    clone.setAttribute('viewBox', `${fit.x} ${fit.y} ${fit.w} ${fit.h}`);
 
     const stage = document.createElement('div');
     stage.style.cssText = 'position:fixed;left:-10000px;top:0;width:1200px;height:1600px;';
@@ -1722,9 +1891,8 @@ async function exportPDF() {
     const usableW = pageW - 2 * margin;
     const usableH = pageH - 50;
 
-    const pad = 900;
-    const drawW_mm_real = W + 2 * pad;
-    const drawH_mm_real = L + 2 * pad;
+    const drawW_mm_real = W + 2 * VIEW_PAD;
+    const drawH_mm_real = L + 2 * VIEW_PAD;
     const factor = Math.min(usableW / drawW_mm_real, usableH / drawH_mm_real);
     const drawW = drawW_mm_real * factor;
     const drawH = drawH_mm_real * factor;
@@ -1869,7 +2037,7 @@ const __api = {
   generatePanels, generateBattens, totalBattenLength, computeSettingOut,
   groupPanels, piecesPerPanel, estimatePurchase, packCutPieces,
   scoreLayout, optimizeLayout, betterLayout,
-  encodeStateHash, decodeStateHash, snapVertex,
+  encodeStateHash, decodeStateHash, snapVertex, fitViewBox, zoomViewBox,
   placeScrews, screwOnBatten, totalScrewCount, offBattenScrewCount,
 };
 if (isBrowser) window.__troldtekt = { ...__api, runOptimize };

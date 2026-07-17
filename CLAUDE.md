@@ -60,7 +60,13 @@ All logic lives in `app.js`.
    changes or the user rotates/re-centers.
 7. `renderSVG(roomPoly, panels, ...)` — draws room outline, centerlines,
    grid, cut highlights, panel labels, and dimension lines as layered
-   SVG groups.
+   SVG groups. The viewBox comes from `zoomView` (user zoom/pan state,
+   null = fit via `fitViewBox`); zoom/pan gestures only rewrite the
+   viewBox attribute (`applyView`), no re-render. `zoomViewBox` (pure,
+   tested) does the anchored-zoom math. Wheel zoom requires Ctrl/Cmd
+   (trackpad pinch arrives as ctrl+wheel); a second pointer pinches;
+   background drags pan; handle drags still edit vertices. PDF export
+   and printing reset the clone/view to fit.
 8. PDF export clones the live SVG, stages it offscreen so `getComputedStyle`
    works for svg2pdf, then renders two A4 pages (drawing + cut list).
    The `.layer-handles` group is removed from the clone (screen-only).

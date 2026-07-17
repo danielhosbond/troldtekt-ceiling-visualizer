@@ -72,6 +72,11 @@
 
   <section>
     <div class="canvas-area">
+      <div class="zoom-controls">
+        <button type="button" id="zoom-in" title="Zoom in (Ctrl+scroll or pinch)" aria-label="Zoom in">+</button>
+        <button type="button" id="zoom-out" title="Zoom out (Ctrl+scroll or pinch)" aria-label="Zoom out">&minus;</button>
+        <button type="button" id="zoom-fit" title="Fit the room in view" aria-label="Fit drawing">Fit</button>
+      </div>
       <svg id="drawing" xmlns="http://www.w3.org/2000/svg"></svg>
       <div class="legend">
         <span><span class="sw" style="background:#fcfcfa; border:1px solid #999;"></span>Full panel</span>
@@ -80,6 +85,7 @@
         <span><span class="sw" style="background:#333; border-radius:50%;"></span>Screw</span>
         <span><span class="sw" style="background:#b91c1c; border-radius:50%;"></span>Screw without batten</span>
         <span><span class="sw" style="background:#c69f6c; border:1px solid #8a5a2b;"></span>Batten</span>
+        <span class="zoom-hint">Zoom: Ctrl+scroll, pinch, or buttons · drag empty space to pan</span>
       </div>
     </div>
     <div class="cut-list" id="cut-list"></div>

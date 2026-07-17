@@ -315,6 +315,26 @@ screwChecks('L-shape', LSHAPE);
   check(s3.x === 0 && s3.y === 30000, 'snapVertex: clamps to the valid coordinate range');
 }
 
+// ---- drawing view (zoom) math ----
+{
+  const fit = T.fitViewBox(RECT);
+  check(fit.x === -900 && fit.y === -900 && fit.w === 5400 && fit.h === 6600,
+        'fitViewBox: room bbox plus 900 mm padding');
+
+  const v = { x: 0, y: 0, w: 1000, h: 800 };
+  const z1 = T.zoomViewBox(v, 2, 250, 200, 100, 5000);
+  check(z1.w === 500 && z1.h === 400, 'zoomViewBox: factor 2 halves the view');
+  check(approx((250 - z1.x) / z1.w, 250 / 1000) && approx((200 - z1.y) / z1.h, 200 / 800),
+        'zoomViewBox: the anchor point stays at the same screen position');
+
+  const z2 = T.zoomViewBox(v, 2, undefined, undefined, 100, 5000);
+  check(z2.x === 250 && z2.y === 200 && z2.w === 500, 'zoomViewBox: defaults to zooming around the center');
+
+  check(T.zoomViewBox(v, 100, 500, 400, 250, 5000).w === 250, 'zoomViewBox: clamps to min width');
+  const zOut = T.zoomViewBox(v, 0.01, 500, 400, 250, 3000);
+  check(zOut.w === 3000 && approx(zOut.h, 2400), 'zoomViewBox: clamps to max width, aspect preserved');
+}
+
 // ---- totalScrewCount fallback (no battens assigned) ----
 {
   const panels = T.generatePanels(RECT);

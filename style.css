@@ -189,13 +189,29 @@ button.secondary:disabled { color: #999; border-color: #e0e0da; cursor: wait; }
 
 .canvas-area {
   background: #fff; border: 1px solid #e6e6e0; border-radius: 3px; padding: 1.25rem; overflow: hidden;
+  position: relative;
 }
+.zoom-controls {
+  position: absolute; top: 0.85rem; right: 0.85rem; z-index: 2;
+  display: flex; flex-direction: column; gap: 0.3rem;
+}
+.zoom-controls button {
+  width: 32px; height: 32px; padding: 0;
+  font: inherit; font-size: 1.05rem; line-height: 1;
+  background: #fff; color: #1a1a1a;
+  border: 1px solid #d6d6d0; border-radius: 3px;
+  cursor: pointer;
+}
+.zoom-controls button:hover { border-color: #1a1a1a; }
+.zoom-controls #zoom-fit { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.03em; }
 svg#drawing {
   width: 100%; height: auto; max-height: 78vh; display: block;
 }
 .legend { display:flex; gap: 1rem; flex-wrap: wrap; font-size: 0.78rem; color: #666; margin-top: 0.5rem; padding-left: 0.25rem; }
 .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
 .legend .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.legend .zoom-hint { margin-left: auto; color: #aaa; }
+body.dark .legend .zoom-hint { color: #777; }
 
 /* SVG element fills/strokes are applied as presentation attributes in
    the renderer (see SVG_STYLE in app.js). Only layer-toggle rules live
@@ -339,6 +355,10 @@ body.dark .canvas-area {
   background: #1f1f1f;
   border-color: #2e2e2e;
 }
+body.dark .zoom-controls button {
+  background: #232323; color: #e6e6e6; border-color: #4a4a4a;
+}
+body.dark .zoom-controls button:hover { border-color: #fb923c; color: #fb923c; }
 body.dark .legend { color: #b0b0b0; }
 /* Legend swatch overrides — keep them in sync with the dark SVG palette */
 body.dark .legend span:nth-child(1) .sw { background: #2a2a2a; border-color: #666 !important; }
@@ -402,6 +422,7 @@ body.dark .warn-banner {
   body.dark .canvas-area { background: #fff; border: none; padding: 0; }
   svg#drawing { max-height: none; }
   .layer-handles { display: none !important; }
+  .zoom-controls { display: none !important; }
   .legend { display: none; }
   .cut-list { break-inside: avoid; }
   .cut-list h2, body.dark .cut-list h2 { color: #000; }
