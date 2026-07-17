@@ -243,6 +243,35 @@ screwChecks('L-shape', LSHAPE);
   screwChecks('trapezoid with offset', TRAPEZOID, 95, { dx: 150, dy: -50 });
 }
 
+// ---- setting-out measurements ----
+{
+  // 3600x4800, long axis vertical: battens are vertical (first
+  // centerline measured from the left wall), panel end joints are
+  // horizontal (measured from the top wall).
+  const so = T.computeSettingOut(RECT);
+  check(so.crossWall === 'left' && so.crossFirst === 300, 'setting out: first batten centerline 300 mm from left wall');
+  check(so.longWall === 'top' && so.longFirst === 600, 'setting out: first panel joint 600 mm from top wall');
+
+  const soOff = T.computeSettingOut(RECT, false, { dx: 150, dy: -100 });
+  check(soOff.crossFirst === 450, 'setting out: batten line follows x offset');
+  check(soOff.longFirst === 500, 'setting out: panel joint follows y offset');
+}
+{
+  // Any room/offset: first lines stay inside one spacing of the wall.
+  for (const poly of [LSHAPE, TRAPEZOID]) {
+    const so = T.computeSettingOut(poly, undefined, { dx: -250, dy: 200 });
+    check(so.crossFirst === null || (so.crossFirst > 0 && so.crossFirst <= 600),
+          'setting out: batten line within 600 mm of the wall');
+    check(so.longFirst === null || (so.longFirst > 0 && so.longFirst <= 1200),
+          'setting out: panel joint within 1200 mm of the wall');
+  }
+  // A room smaller than one grid spacing has no interior lines.
+  const tiny = [{ x: 0, y: 0 }, { x: 500, y: 0 }, { x: 500, y: 400 }, { x: 0, y: 400 }];
+  const soTiny = T.computeSettingOut(tiny);
+  check(soTiny.crossFirst === null && soTiny.longFirst === null,
+        'setting out: sub-grid room reports no chalk lines');
+}
+
 // ---- state hash round-trip ----
 {
   const state = {
@@ -268,7 +297,8 @@ screwChecks('L-shape', LSHAPE);
   check(!hash.includes('rot') && !hash.includes('ox') && !hash.includes('hide'),
         'hash: default rotation/offset/layers omitted');
   const back = T.decodeStateHash(hash); // also works without the leading #
-  check(back.rotated === undefined && back.offset === undefined, 'hash: omitted fields stay undefined');
+  check(back.rotated === false && back.hide === '' && back.offset === undefined,
+        'hash: omitted rotation/layers decode to defaults so shared links render identically');
   check(T.decodeStateHash('') === null, 'hash: empty input → null');
   check(T.decodeStateHash('#w=10') === null, 'hash: no polygon → null');
   check(T.encodeStateHash({ polygonText: 'garbage' }) === '', 'hash: invalid polygon → empty string');

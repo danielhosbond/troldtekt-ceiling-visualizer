@@ -7,7 +7,10 @@ Built for hosting on GitHub Pages.
 ## Stack
 
 - Three app files: `index.html`, `style.css`, `app.js`. No build step.
-- jsPDF + svg2pdf.js loaded from CDN for PDF export.
+- jsPDF + svg2pdf.js loaded from CDN for PDF export, pinned with SRI
+  hashes (recompute when bumping versions: `openssl dgst -sha384
+  -binary file.js | openssl base64 -A`). `exportPDF` checks the
+  globals and alerts instead of crashing when they failed to load.
 - `app.js` is loaded with `defer` so it runs after the DOM is parsed.
 - No package.json, no node_modules, no bundler.
 - `test.js` — dev-only assertion tests for the pure geometry. Run with
@@ -125,3 +128,12 @@ All logic lives in `app.js`.
   (before waste), then cut-piece count, then offset magnitude (ties
   prefer centered and the natural orientation). A 50 mm grid can miss
   narrow feasible windows; `OPTIMIZE_STEP` controls it.
+- **Setting out** (`computeSettingOut`): first interior batten
+  centerline and first even-row panel joint, measured from the
+  bounding-box walls (same bbox caveat as the anchor dims). Shown in
+  the summary and PDF; null when the room is smaller than one spacing.
+- **Print**: `@media print` in style.css (must stay last, after the
+  dark-mode rules) plus beforeprint/afterprint handlers that swap the
+  SVG to the light palette.
+- **Language**: UI chrome and PDF text are English; Danish stays for
+  trade terms (halv forbandt), template room names, and kr. prices.

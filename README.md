@@ -75,9 +75,21 @@ No build step. Hostable as static files on GitHub Pages.
   (persisted in `localStorage`, defaults to `prefers-color-scheme`).
   Dark palette uses dark-grey surfaces with orange accents; PDF export
   always renders against a light palette so prints stay legible.
+- **Setting-out measurements** — the summary (and PDF) lists the chalk
+  lines an installer marks first: distance from the wall to the first
+  interior batten centerline (then 600 mm c/c) and to the first panel
+  end joint (then 1200 mm, odd rows shifted 600 mm). Measured from the
+  bounding-box walls — exact for rectangular rooms, approximate for
+  polygons.
 - **PDF export** (jsPDF + svg2pdf): page 1 is the drawing with all
   layers on plus scale 1:N; page 2 is the materials summary, cost
-  block, and grouped cut list (including batten metres).
+  block, and grouped cut list (including batten metres). The CDN
+  scripts carry SRI hashes; if they fail to load (offline), export
+  shows a clear message instead of crashing.
+- **Print stylesheet** — printing the page directly gives a
+  zero-dependency alternative to the PDF: the drawing, summary, and
+  cut list print on white (the SVG swaps to the light palette during
+  printing); inputs and buttons are hidden.
 
 ## Usage
 
@@ -187,8 +199,13 @@ __troldtekt.runOptimize();                     // same as clicking "Optimize lay
 
 ## Dependencies
 
-CDN-loaded at runtime:
+CDN-loaded at runtime, pinned with SRI integrity hashes:
 
 - [`jsPDF`](https://github.com/parallax/jsPDF) — PDF generation.
 - [`svg2pdf.js`](https://github.com/yWorks/svg2pdf.js) — render SVG into
   a jsPDF document via `pdf.svg(svgElement, options)`.
+
+Everything except PDF export works offline once the page is loaded;
+export fails with a clear message when the libraries are unavailable.
+UI language is English with Danish domain terms kept where they are
+the trade vocabulary (halv forbandt, room-template names, kr. prices).

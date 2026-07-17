@@ -446,6 +446,52 @@ function totalBattenLength(battens) {
   return battens.reduce((sum, b) => sum + b.length, 0); // mm
 }
 
+// -------- Setting-out measurements --------
+
+// The numbers an installer chalks on the ceiling before anything goes
+// up, measured from the bounding-box walls (exact for rectangular
+// rooms, approximate for polygons — same caveat as the anchor dims):
+//  - crossFirst: distance from the cross-axis min wall (top wall when
+//    battens run horizontally, left wall when vertical) to the first
+//    interior batten centerline; battens repeat at 600 mm c/c.
+//  - longFirst: distance from the long-axis min wall to the first
+//    panel end joint on even rows; joints repeat at 1200 mm, odd rows
+//    are shifted 600 mm (halv forbandt).
+// Either is null when the room is too small to have such a line.
+function computeSettingOut(roomPoly, longAxisX, offset) {
+  const bbox = polygonBBox(roomPoly);
+  if (longAxisX === undefined) longAxisX = bbox.w >= bbox.h;
+  let cx = bbox.x0 + bbox.w / 2;
+  let cy = bbox.y0 + bbox.h / 2;
+  if (!pointInPolygon({ x: cx, y: cy }, roomPoly)) {
+    const c = polygonCentroid(roomPoly);
+    cx = c.x; cy = c.y;
+  }
+  if (offset) { cx += offset.dx || 0; cy += offset.dy || 0; }
+
+  const crossMin  = longAxisX ? bbox.y0 : bbox.x0;
+  const crossSize = longAxisX ? bbox.h : bbox.w;
+  const longMin   = longAxisX ? bbox.x0 : bbox.y0;
+  const longSize  = longAxisX ? bbox.w : bbox.h;
+  const crossC    = longAxisX ? cy : cx;
+  const longC     = longAxisX ? cx : cy;
+
+  // First grid line strictly inside the room (a line on the wall itself
+  // is the wall, not a chalk line).
+  const firstInside = (anchor, spacing, min) =>
+    anchor + Math.ceil((min + 1 - anchor) / spacing) * spacing - min;
+
+  let crossFirst = Math.round(firstInside(crossC - PANEL_SHORT / 2, BATTEN_SPACING, crossMin));
+  let longFirst  = Math.round(firstInside(longC - PANEL_LONG / 2, PANEL_LONG, longMin));
+  if (crossFirst >= crossSize - 1) crossFirst = null;
+  if (longFirst  >= longSize - 1)  longFirst  = null;
+
+  return {
+    crossFirst, crossWall: longAxisX ? 'top' : 'left',
+    longFirst,  longWall:  longAxisX ? 'left' : 'top',
+  };
+}
+
 // -------- Cut grouping --------
 
 function groupPanels(panels) {
@@ -769,6 +815,11 @@ function decodeStateHash(hash) {
   }
   if (!s.polygonText) return null;
   if (isFinite(ox) || isFinite(oy)) s.offset = { dx: ox || 0, dy: oy || 0 };
+  // encodeStateHash omits default values, so absence means default —
+  // fill them in so a shared link renders the same for every recipient
+  // regardless of their previous rotation/toggle state.
+  if (s.rotated === undefined) s.rotated = false;
+  if (s.hide === undefined) s.hide = '';
   return s;
 }
 
@@ -1130,7 +1181,7 @@ function drawOffsetH(g, y, x0, x1, label) {
 
 // -------- UI: summary, cut list, layer toggles --------
 
-function renderSummary(roomPoly, group, purchase, wastePct, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice) {
+function renderSummary(roomPoly, group, purchase, wastePct, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice, so) {
   const bb = polygonBBox(roomPoly);
   const m2 = polygonArea(roomPoly) / 1e6;
   els.summary.innerHTML = `
@@ -1147,6 +1198,12 @@ function renderSummary(roomPoly, group, purchase, wastePct, screwCount, battenMe
     <div class="stat" style="font-size:0.78rem; color:#888;"><span>screw packs of 100</span><span>${costs.screwPacks}</span></div>
     <div class="stat total"><span>Battens needed</span><strong>${battenMeters.toFixed(2)} m</strong></div>
     <div class="stat" style="font-size:0.78rem; color:#888;"><span>edges along long axis + interior @ 600 mm</span></div>
+    ${so && so.crossFirst != null ? `
+    <div class="stat total"><span>First batten centerline</span><strong>${so.crossFirst} mm</strong></div>
+    <div class="stat" style="font-size:0.78rem; color:#888;"><span>from ${so.crossWall} wall · then 600 mm c/c</span></div>` : ''}
+    ${so && so.longFirst != null ? `
+    <div class="stat"><span>First panel end joint</span><strong>${so.longFirst} mm</strong></div>
+    <div class="stat" style="font-size:0.78rem; color:#888;"><span>from ${so.longWall} wall (even rows) · odd rows +600 mm</span></div>` : ''}
     <div class="stat total"><span>Panel cost</span><strong>${fmtMoney(costs.panelCost)}</strong></div>
     <div class="stat" style="font-size:0.78rem; color:#888;"><span>${purchase.withWaste} × ${fmtMoney(panelPrice)}</span></div>
     <div class="stat"><span>Screw cost</span><strong>${fmtMoney(costs.screwCost)}</strong></div>
@@ -1377,12 +1434,13 @@ function update() {
   const screwCount = totalScrewCount(panels);
   const offBatten = offBattenScrewCount(panels);
   const costs = computeCosts(purchase, screwCount, battenMeters, panelPrice, screwPackPrice, battenPrice);
+  const settingOut = computeSettingOut(roomPoly, longAxisX, anchorOffset);
   renderSVG(roomPoly, panels, battens, battenWidth, longAxisX, anchorOffset);
-  renderSummary(roomPoly, group, purchase, waste, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice);
+  renderSummary(roomPoly, group, purchase, waste, screwCount, battenMeters, costs, panelPrice, screwPackPrice, battenPrice, settingOut);
   renderCutList(group, offBatten);
   renderAnchorStatus();
   updateLayerClasses();
-  lastState = { roomPoly, waste, panels, battens, battenMeters, battenWidth, group, purchase, screwCount, offBatten, costs, panelPrice, screwPackPrice, battenPrice };
+  lastState = { roomPoly, waste, panels, battens, battenMeters, battenWidth, group, purchase, screwCount, offBatten, costs, panelPrice, screwPackPrice, battenPrice, settingOut };
   saveState();
 }
 
@@ -1517,6 +1575,19 @@ if (isBrowser) {
     writePolyToTextarea(poly);
     update();
   });
+
+  // Printing happens on white paper — swap the SVG to the light
+  // palette for the duration of the print, mirroring PDF export.
+  // (style.css @media print handles the page chrome.)
+  let printWasDark = false;
+  window.addEventListener('beforeprint', () => {
+    printWasDark = document.body.classList.contains('dark');
+    if (printWasDark) { theme = THEMES.light; update(); }
+  });
+  window.addEventListener('afterprint', () => {
+    if (printWasDark) { theme = THEMES.dark; update(); }
+    printWasDark = false;
+  });
 }
 
 // -------- Theme (light / dark) --------
@@ -1613,6 +1684,13 @@ if (isBrowser) {
 // -------- PDF export --------
 
 async function exportPDF() {
+  // jsPDF + svg2pdf load from CDNs (with SRI); if either failed —
+  // offline, blocked, or tampered — fail with a clear message instead
+  // of a TypeError.
+  if (!window.jspdf || !window.jspdf.jsPDF || typeof window.svg2pdf === 'undefined') {
+    alert('PDF export is unavailable: the jsPDF/svg2pdf libraries could not be loaded from their CDNs. Check your connection and reload the page.');
+    return;
+  }
   const btn = els.exportBtn;
   const prevText = btn.textContent;
   btn.disabled = true;
@@ -1625,7 +1703,7 @@ async function exportPDF() {
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
-    const { roomPoly, waste, group, purchase, screwCount, offBatten, battenMeters, costs, panelPrice, screwPackPrice, battenPrice } = lastState;
+    const { roomPoly, waste, group, purchase, screwCount, offBatten, battenMeters, costs, panelPrice, screwPackPrice, battenPrice, settingOut } = lastState;
     const bb = polygonBBox(roomPoly);
     const W = Math.round(bb.w), L = Math.round(bb.h);
 
@@ -1655,8 +1733,8 @@ async function exportPDF() {
     pdf.setFont('helvetica', 'bold'); pdf.setFontSize(14);
     pdf.text('Troldtekt Panel Calculator', margin, 16);
     pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10);
-    pdf.text(`Rum (bbox): ${W} × ${L} mm`, margin, 23);
-    pdf.text(`Skala 1:${scaleDenom}`, pageW - margin, 23, { align: 'right' });
+    pdf.text(`Room (bbox): ${W} × ${L} mm`, margin, 23);
+    pdf.text(`Scale 1:${scaleDenom}`, pageW - margin, 23, { align: 'right' });
     pdf.text(`Halv forbandt · centered`, margin, 28);
     pdf.text(new Date().toLocaleDateString(), pageW - margin, 28, { align: 'right' });
 
@@ -1670,7 +1748,7 @@ async function exportPDF() {
     pdf.setFont('helvetica', 'bold'); pdf.setFontSize(14);
     pdf.text('Materials & Cut List', margin, 16);
     pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10);
-    pdf.text(`Rum (bbox): ${W} × ${L} mm`, margin, 23);
+    pdf.text(`Room (bbox): ${W} × ${L} mm`, margin, 23);
 
     let y = 34;
     pdf.setFont('helvetica', 'bold'); pdf.setFontSize(11);
@@ -1689,6 +1767,12 @@ async function exportPDF() {
     ];
     if (offBatten > 0) {
       lines.push(`NOTE: ${offBatten} screw${offBatten === 1 ? '' : 's'} without a batten beneath — add battens/noggins there.`);
+    }
+    if (settingOut && settingOut.crossFirst != null) {
+      lines.push(`Setting out: first batten centerline ${settingOut.crossFirst} mm from ${settingOut.crossWall} wall, then 600 mm c/c`);
+    }
+    if (settingOut && settingOut.longFirst != null) {
+      lines.push(`   first panel end joint ${settingOut.longFirst} mm from ${settingOut.longWall} wall (even rows), 1200 mm c/c, odd rows +600 mm`);
     }
     for (const line of lines) { pdf.text(line, margin, y); y += 5.2; }
     y += 6;
@@ -1782,7 +1866,7 @@ async function exportPDF() {
 const __api = {
   parsePolygon, polygonBBox, polygonArea, polygonSignedArea, polygonCentroid,
   pointInPolygon, clipPolygonByRect, findSelfIntersection, segmentsIntersect,
-  generatePanels, generateBattens, totalBattenLength,
+  generatePanels, generateBattens, totalBattenLength, computeSettingOut,
   groupPanels, piecesPerPanel, estimatePurchase, packCutPieces,
   scoreLayout, optimizeLayout, betterLayout,
   encodeStateHash, decodeStateHash, snapVertex,

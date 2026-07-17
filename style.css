@@ -373,3 +373,42 @@ body.dark .warn-banner {
   background: #2a0e0e;
   border-left-color: #ef4444;
 }
+
+/* -------- Print (zero-dependency alternative to PDF export) --------
+   The drawing, summary, and cut list print; input chrome does not.
+   app.js swaps the SVG to the light palette on beforeprint. Must stay
+   last in the file so it wins over the dark-mode rules above. */
+
+@media print {
+  body, body.dark { background: #fff; color: #000; }
+  header, body.dark header { background: none; border-bottom: 1px solid #000; padding: 0 0 0.5rem; }
+  header h1 { color: #000; }
+  .header-actions, .templates { display: none !important; }
+  main { display: block; padding: 0.5rem 0; max-width: none; }
+  .controls { position: static; display: block; }
+  .controls > .field,
+  .controls > button,
+  .controls > .btn-row,
+  .controls > .toggles,
+  .anchor-status { display: none !important; }
+  .summary,
+  body.dark .summary {
+    background: #fff; color: #000; border: 1px solid #bbb;
+    margin-bottom: 0.75rem; break-inside: avoid;
+  }
+  body.dark .summary h3 { color: #333; }
+  body.dark .summary .stat strong { color: #000; }
+  .canvas-area,
+  body.dark .canvas-area { background: #fff; border: none; padding: 0; }
+  svg#drawing { max-height: none; }
+  .layer-handles { display: none !important; }
+  .legend { display: none; }
+  .cut-list { break-inside: avoid; }
+  .cut-list h2, body.dark .cut-list h2 { color: #000; }
+  .cut-list table,
+  body.dark .cut-list table { background: #fff; color: #000; border-color: #bbb; }
+  .cut-list th,
+  body.dark .cut-list th { background: #eee; color: #333; border-bottom-color: #bbb; }
+  body.dark .cut-list td { border-bottom-color: #ddd; }
+  .warn-banner, body.dark .warn-banner { background: #fff; color: #991b1b; }
+}
